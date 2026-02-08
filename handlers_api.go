@@ -469,3 +469,401 @@ func handleDeleteThread(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// Valid status tags that can be applied to threads and replies.
+var validStatusTags = map[string]bool{
+	"acknowledged": true,
+	"depends-on":   true,
+	"blocked":      true,
+	"resolved":     true,
+	"in-progress":  true,
+	"needs-review": true,
+}
+
+// handleCreateReply creates a new reply on a thread.
+func handleCreateReply(db *sql.DB, w http.ResponseWriter, r *http.Request) {
+	agent := AgentFromContext(r.Context())
+	if agent == nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+
+	threadID := r.PathValue("id")
+	if threadID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing thread id"})
+		return
+	}
+
+	// Verify thread exists
+	var exists bool
+	err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM threads WHERE id = ?)", threadID).Scan(&exists)
+	if err != nil || !exists {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "thread not found"})
+		return
+	}
+
+	var input struct {
+		Body string `json:"body"`
+	}
+	if err := readJSON(r, &input); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+		return
+	}
+	if input.Body == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "body is required"})
+		return
+	}
+
+	id := uuid.New().String()
+	now := time.Now()
+
+	_, err = db.Exec(
+		`INSERT INTO replies (id, thread_id, agent_id, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		id, threadID, agent.ID, input.Body, now, now,
+	)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create reply"})
+		return
+	}
+
+	reply := Reply{
+		ID:        id,
+		ThreadID:  threadID,
+		AgentID:   agent.ID,
+		AgentName: agent.Name,
+		Body:      input.Body,
+		CreatedAt: now,
+		UpdatedAt: now,
+		Statuses:  []StatusTag{},
+	}
+
+	writeJSON(w, http.StatusCreated, reply)
+}
+
+// handleUpdateReply updates a reply owned by the requesting agent.
+func handleUpdateReply(db *sql.DB, w http.ResponseWriter, r *http.Request) {
+	agent := AgentFromContext(r.Context())
+	if agent == nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+
+	replyID := r.PathValue("id")
+	if replyID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing reply id"})
+		return
+	}
+
+	// Check if reply exists and verify ownership
+	var ownerID string
+	err := db.QueryRow("SELECT agent_id FROM replies WHERE id = ?", replyID).Scan(&ownerID)
+	if err == sql.ErrNoRows {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "reply not found"})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to query reply"})
+		return
+	}
+	if ownerID != agent.ID {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "you can only update your own replies"})
+		return
+	}
+
+	var input struct {
+		Body string `json:"body"`
+	}
+	if err := readJSON(r, &input); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+		return
+	}
+	if input.Body == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "body is required"})
+		return
+	}
+
+	now := time.Now()
+	_, err = db.Exec("UPDATE replies SET body = ?, updated_at = ? WHERE id = ?", input.Body, now, replyID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to update reply"})
+		return
+	}
+
+	// Return the updated reply
+	var reply Reply
+	err = db.QueryRow(
+		`SELECT r.id, r.thread_id, r.agent_id, a.name, r.body, r.created_at, r.updated_at
+		FROM replies r
+		JOIN agents a ON r.agent_id = a.id
+		WHERE r.id = ?`, replyID,
+	).Scan(&reply.ID, &reply.ThreadID, &reply.AgentID, &reply.AgentName, &reply.Body, &reply.CreatedAt, &reply.UpdatedAt)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to retrieve updated reply"})
+		return
+	}
+	reply.Statuses = []StatusTag{}
+
+	writeJSON(w, http.StatusOK, reply)
+}
+
+// handleDeleteReply deletes a reply owned by the requesting agent.
+func handleDeleteReply(db *sql.DB, w http.ResponseWriter, r *http.Request) {
+	agent := AgentFromContext(r.Context())
+	if agent == nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+
+	replyID := r.PathValue("id")
+	if replyID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing reply id"})
+		return
+	}
+
+	// Check if reply exists and verify ownership
+	var ownerID string
+	err := db.QueryRow("SELECT agent_id FROM replies WHERE id = ?", replyID).Scan(&ownerID)
+	if err == sql.ErrNoRows {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "reply not found"})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to query reply"})
+		return
+	}
+	if ownerID != agent.ID {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "you can only delete your own replies"})
+		return
+	}
+
+	if _, err := db.Exec("DELETE FROM replies WHERE id = ?", replyID); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to delete reply"})
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleCreateThreadStatus adds a status tag to a thread.
+func handleCreateThreadStatus(db *sql.DB, w http.ResponseWriter, r *http.Request) {
+	agent := AgentFromContext(r.Context())
+	if agent == nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+
+	threadID := r.PathValue("id")
+	if threadID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing thread id"})
+		return
+	}
+
+	// Verify thread exists
+	var exists bool
+	err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM threads WHERE id = ?)", threadID).Scan(&exists)
+	if err != nil || !exists {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "thread not found"})
+		return
+	}
+
+	var input struct {
+		Tag         string  `json:"tag"`
+		ReferenceID *string `json:"reference_id"`
+	}
+	if err := readJSON(r, &input); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+		return
+	}
+
+	if !validStatusTags[input.Tag] {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid status tag"})
+		return
+	}
+
+	id := uuid.New().String()
+	now := time.Now()
+
+	_, err = db.Exec(
+		`INSERT INTO status_tags (id, thread_id, reply_id, agent_id, tag, reference_id, created_at) VALUES (?, ?, NULL, ?, ?, ?, ?)`,
+		id, threadID, agent.ID, input.Tag, input.ReferenceID, now,
+	)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create status tag"})
+		return
+	}
+
+	st := StatusTag{
+		ID:          id,
+		ThreadID:    &threadID,
+		AgentID:     agent.ID,
+		AgentName:   agent.Name,
+		Tag:         input.Tag,
+		ReferenceID: input.ReferenceID,
+		CreatedAt:   now,
+	}
+
+	writeJSON(w, http.StatusCreated, st)
+}
+
+// handleCreateReplyStatus adds a status tag to a reply.
+func handleCreateReplyStatus(db *sql.DB, w http.ResponseWriter, r *http.Request) {
+	agent := AgentFromContext(r.Context())
+	if agent == nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+
+	replyID := r.PathValue("id")
+	if replyID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing reply id"})
+		return
+	}
+
+	// Verify reply exists
+	var exists bool
+	err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM replies WHERE id = ?)", replyID).Scan(&exists)
+	if err != nil || !exists {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "reply not found"})
+		return
+	}
+
+	var input struct {
+		Tag         string  `json:"tag"`
+		ReferenceID *string `json:"reference_id"`
+	}
+	if err := readJSON(r, &input); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+		return
+	}
+
+	if !validStatusTags[input.Tag] {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid status tag"})
+		return
+	}
+
+	id := uuid.New().String()
+	now := time.Now()
+
+	_, err = db.Exec(
+		`INSERT INTO status_tags (id, thread_id, reply_id, agent_id, tag, reference_id, created_at) VALUES (?, NULL, ?, ?, ?, ?, ?)`,
+		id, replyID, agent.ID, input.Tag, input.ReferenceID, now,
+	)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create status tag"})
+		return
+	}
+
+	st := StatusTag{
+		ID:          id,
+		ReplyID:     &replyID,
+		AgentID:     agent.ID,
+		AgentName:   agent.Name,
+		Tag:         input.Tag,
+		ReferenceID: input.ReferenceID,
+		CreatedAt:   now,
+	}
+
+	writeJSON(w, http.StatusCreated, st)
+}
+
+// handleDeleteStatus deletes a status tag owned by the requesting agent.
+func handleDeleteStatus(db *sql.DB, w http.ResponseWriter, r *http.Request) {
+	agent := AgentFromContext(r.Context())
+	if agent == nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+
+	statusID := r.PathValue("id")
+	if statusID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing status tag id"})
+		return
+	}
+
+	// Check if status tag exists and verify ownership
+	var ownerID string
+	err := db.QueryRow("SELECT agent_id FROM status_tags WHERE id = ?", statusID).Scan(&ownerID)
+	if err == sql.ErrNoRows {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "status tag not found"})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to query status tag"})
+		return
+	}
+	if ownerID != agent.ID {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "you can only delete your own status tags"})
+		return
+	}
+
+	if _, err := db.Exec("DELETE FROM status_tags WHERE id = ?", statusID); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to delete status tag"})
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleQueryStatus queries status tags by tag value with context previews.
+func handleQueryStatus(db *sql.DB, w http.ResponseWriter, r *http.Request) {
+	agent := AgentFromContext(r.Context())
+	if agent == nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+
+	tag := r.URL.Query().Get("tag")
+	if tag == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "tag query parameter is required"})
+		return
+	}
+
+	rows, err := db.Query(
+		`SELECT s.id, s.thread_id, s.reply_id, s.agent_id, a.name, s.tag, s.reference_id, s.created_at,
+			COALESCE(t.title, ''),
+			COALESCE(
+				CASE WHEN s.reply_id IS NOT NULL THEN
+					CASE WHEN LENGTH(rep.body) > 100 THEN SUBSTR(rep.body, 1, 100) || '...' ELSE rep.body END
+				ELSE
+					CASE WHEN LENGTH(t.body) > 100 THEN SUBSTR(t.body, 1, 100) || '...' ELSE t.body END
+				END,
+			'')
+		FROM status_tags s
+		JOIN agents a ON s.agent_id = a.id
+		LEFT JOIN threads t ON s.thread_id = t.id
+		LEFT JOIN replies rep ON s.reply_id = rep.id
+		WHERE s.tag = ?
+		ORDER BY s.created_at DESC`, tag,
+	)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to query status tags"})
+		return
+	}
+	defer rows.Close()
+
+	type StatusTagWithPreview struct {
+		StatusTag
+		Preview string `json:"preview"`
+	}
+
+	results := []StatusTagWithPreview{}
+	for rows.Next() {
+		var st StatusTagWithPreview
+		var title string
+		if err := rows.Scan(&st.ID, &st.ThreadID, &st.ReplyID, &st.AgentID, &st.AgentName, &st.Tag, &st.ReferenceID, &st.CreatedAt, &title, &st.Preview); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to scan status tag"})
+			return
+		}
+		// For thread statuses, use the thread title as preview
+		if st.ThreadID != nil && st.ReplyID == nil && title != "" {
+			st.Preview = title
+		}
+		results = append(results, st)
+	}
+	if err := rows.Err(); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to iterate status tags"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, results)
+}
