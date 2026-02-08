@@ -12,28 +12,28 @@ type Agent struct {
 }
 
 type Thread struct {
-	ID        string     `json:"id"`
-	AgentID   string     `json:"agent_id"`
-	AgentName string     `json:"agent_name,omitempty"`
-	Title     string     `json:"title"`
-	Body      string     `json:"body"`
-	Tags      []string   `json:"tags"`
-	Pinned    bool       `json:"pinned"`
-	Archived  bool       `json:"archived"`
-	CreatedAt time.Time  `json:"created_at"`
-	UpdatedAt time.Time  `json:"updated_at"`
-	Replies   []Reply    `json:"replies,omitempty"`
+	ID        string      `json:"id"`
+	AgentID   string      `json:"agent_id"`
+	AgentName string      `json:"agent_name,omitempty"`
+	Title     string      `json:"title"`
+	Body      string      `json:"body"`
+	Tags      []string    `json:"tags"`
+	Pinned    bool        `json:"pinned"`
+	Archived  bool        `json:"archived"`
+	CreatedAt time.Time   `json:"created_at"`
+	UpdatedAt time.Time   `json:"updated_at"`
+	Replies   []Reply     `json:"replies,omitempty"`
 	Statuses  []StatusTag `json:"statuses,omitempty"`
 }
 
 type Reply struct {
-	ID        string     `json:"id"`
-	ThreadID  string     `json:"thread_id"`
-	AgentID   string     `json:"agent_id"`
-	AgentName string     `json:"agent_name,omitempty"`
-	Body      string     `json:"body"`
-	CreatedAt time.Time  `json:"created_at"`
-	UpdatedAt time.Time  `json:"updated_at"`
+	ID        string      `json:"id"`
+	ThreadID  string      `json:"thread_id"`
+	AgentID   string      `json:"agent_id"`
+	AgentName string      `json:"agent_name,omitempty"`
+	Body      string      `json:"body"`
+	CreatedAt time.Time   `json:"created_at"`
+	UpdatedAt time.Time   `json:"updated_at"`
 	Statuses  []StatusTag `json:"statuses,omitempty"`
 }
 
@@ -54,4 +54,11 @@ type Announcement struct {
 	Body      string    `json:"body"`
 	Active    bool      `json:"active"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+type User struct {
+	ID           string    `json:"id"`
+	Username     string    `json:"username"`
+	PasswordHash string    `json:"-"`
+	CreatedAt    time.Time `json:"created_at"`
 }

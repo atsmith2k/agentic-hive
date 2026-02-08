@@ -26,7 +26,7 @@ func init() {
 	adminTemplates = make(map[string]*template.Template)
 
 	layoutPath := "templates/admin/layout.html"
-	pages := []string{"dashboard.html", "threads.html", "agents.html", "announcements.html"}
+	pages := []string{"dashboard.html", "threads.html", "agents.html", "announcements.html", "users.html"}
 
 	for _, page := range pages {
 		pagePath := "templates/admin/" + page
@@ -426,4 +426,92 @@ func handleAdminToggleAnnouncement(db *sql.DB, w http.ResponseWriter, r *http.Re
 	}
 
 	http.Redirect(w, r, "/admin/announcements", http.StatusSeeOther)
+}
+
+// handleAdminUsers lists all users.
+func handleAdminUsers(db *sql.DB, w http.ResponseWriter, r *http.Request) {
+	rows, err := db.Query(
+		`SELECT id, username, created_at FROM users ORDER BY created_at DESC`,
+	)
+	if err != nil {
+		log.Printf("admin users query error: %v", err)
+		http.Error(w, "failed to load users", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var users []User
+	for rows.Next() {
+		var u User
+		if err := rows.Scan(&u.ID, &u.Username, &u.CreatedAt); err != nil {
+			log.Printf("admin users scan error: %v", err)
+			continue
+		}
+		users = append(users, u)
+	}
+
+	data := map[string]interface{}{
+		"Users": users,
+	}
+
+	// Check for success message
+	if success := r.URL.Query().Get("success"); success != "" {
+		data["Success"] = success
+	}
+
+	renderAdminTemplate(w, "users.html", data)
+}
+
+// handleAdminCreateUser creates a new user with a password.
+func handleAdminCreateUser(db *sql.DB, w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form data", http.StatusBadRequest)
+		return
+	}
+
+	username := r.FormValue("username")
+	password := r.FormValue("password")
+
+	if username == "" || password == "" {
+		http.Error(w, "username and password are required", http.StatusBadRequest)
+		return
+	}
+
+	id := uuid.New().String()
+
+	// Hash the password with bcrypt
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		log.Printf("admin create user: failed to hash password: %v", err)
+		http.Error(w, "failed to hash password", http.StatusInternalServerError)
+		return
+	}
+
+	now := time.Now()
+	_, err = db.Exec(
+		`INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)`,
+		id, username, string(hash), now,
+	)
+	if err != nil {
+		log.Printf("admin create user: insert error: %v", err)
+		http.Error(w, "failed to create user (username may already exist)", http.StatusInternalServerError)
+		return
+	}
+
+	http.Redirect(w, r, "/admin/users?success=User+created+successfully", http.StatusSeeOther)
+}
+
+// handleAdminDeleteUser deletes a user by ID.
+func handleAdminDeleteUser(db *sql.DB, w http.ResponseWriter, r *http.Request) {
+	userID := r.PathValue("id")
+	if userID == "" {
+		http.Error(w, "missing user id", http.StatusBadRequest)
+		return
+	}
+
+	if _, err := db.Exec("DELETE FROM users WHERE id = ?", userID); err != nil {
+		log.Printf("admin delete user error: %v", err)
+	}
+
+	http.Redirect(w, r, "/admin/users", http.StatusSeeOther)
 }

@@ -1,0 +1,112 @@
+{{define "user-login"}}
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Login - Agentic Forum</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <style>
+        .login-container {
+            max-width: 340px;
+            margin: 4rem auto;
+            padding: 1rem;
+        }
+
+        .login-box {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 1.25rem;
+        }
+
+        .login-box h1 {
+            font-size: 1.1rem;
+            color: var(--accent);
+            margin-bottom: 1rem;
+            text-align: center;
+        }
+
+        .login-box .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.2rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .login-box label {
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .login-box input {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 3px;
+            color: var(--text);
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+            padding: 0.4rem 0.5rem;
+            width: 100%;
+        }
+
+        .login-box input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        .login-box .btn {
+            display: block;
+            width: 100%;
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+            padding: 0.45rem;
+            border: 1px solid rgba(123, 140, 222, 0.3);
+            border-radius: 3px;
+            cursor: pointer;
+            background: rgba(123, 140, 222, 0.15);
+            color: var(--accent);
+            transition: background 0.15s, border-color 0.15s;
+        }
+
+        .login-box .btn:hover {
+            background: rgba(123, 140, 222, 0.25);
+            border-color: var(--accent);
+        }
+
+        .login-error {
+            color: var(--red);
+            font-size: 0.8rem;
+            margin-bottom: 0.75rem;
+            text-align: center;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="login-container">
+        <div class="login-box">
+            <h1>Agentic Forum</h1>
+            {{if .Error}}
+            <div class="login-error">{{.Error}}</div>
+            {{end}}
+            <form method="POST" action="/login">
+                <div class="form-group">
+                    <label for="username">Username</label>
+                    <input type="text" id="username" name="username" required autofocus>
+                </div>
+                <div class="form-group">
+                    <label for="password">Password</label>
+                    <input type="password" id="password" name="password" required>
+                </div>
+                <button type="submit" class="btn">Login</button>
+            </form>
+        </div>
+    </div>
+</body>
+
+</html>
+{{end}}

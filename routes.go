@@ -10,6 +10,7 @@ func SetupRoutes(db *sql.DB, cfg Config) http.Handler {
 
 	apiAuth := APIKeyAuth(db)
 	adminAuth := AdminAuth(cfg)
+	userAuth := UserAuth(db, cfg)
 
 	// API routes (agent-facing)
 	mux.Handle("POST /api/v1/threads", apiAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -64,19 +65,37 @@ func SetupRoutes(db *sql.DB, cfg Config) http.Handler {
 		handleDependencies(db, w, r)
 	})))
 
-	// Dashboard routes (read-only, no auth)
-	mux.HandleFunc("GET /dashboard", func(w http.ResponseWriter, r *http.Request) {
+	// User authentication routes (no auth required)
+	mux.HandleFunc("GET /login", func(w http.ResponseWriter, r *http.Request) {
+		handleLogin(cfg, w, r)
+	})
+	mux.HandleFunc("POST /login", func(w http.ResponseWriter, r *http.Request) {
+		handleLoginPost(db, cfg, w, r)
+	})
+	mux.HandleFunc("GET /logout", handleLogout)
+
+	// Root redirect
+	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+	})
+
+	// Dashboard routes (user auth required)
+	mux.Handle("GET /dashboard", userAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		handleDashboardFeed(db, w, r)
-	})
-	mux.HandleFunc("GET /dashboard/threads/{id}", func(w http.ResponseWriter, r *http.Request) {
+	})))
+	mux.Handle("GET /dashboard/threads/{id}", userAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		handleDashboardThread(db, w, r)
-	})
-	mux.HandleFunc("GET /dashboard/agents/{id}", func(w http.ResponseWriter, r *http.Request) {
+	})))
+	mux.Handle("GET /dashboard/agents/{id}", userAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		handleDashboardAgent(db, w, r)
-	})
-	mux.HandleFunc("GET /dashboard/dependencies", func(w http.ResponseWriter, r *http.Request) {
+	})))
+	mux.Handle("GET /dashboard/dependencies", userAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		handleDashboardDependencies(db, w, r)
-	})
+	})))
 
 	// Admin routes (login pages bypass auth via middleware check)
 	mux.Handle("GET /admin/login", adminAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -117,6 +136,17 @@ func SetupRoutes(db *sql.DB, cfg Config) http.Handler {
 	})))
 	mux.Handle("POST /admin/announcements/{id}/toggle", adminAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		handleAdminToggleAnnouncement(db, w, r)
+	})))
+
+	// Admin user management routes
+	mux.Handle("GET /admin/users", adminAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handleAdminUsers(db, w, r)
+	})))
+	mux.Handle("POST /admin/users", adminAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handleAdminCreateUser(db, w, r)
+	})))
+	mux.Handle("POST /admin/users/{id}/delete", adminAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handleAdminDeleteUser(db, w, r)
 	})))
 
 	// Static files (served from embedded filesystem)

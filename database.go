@@ -82,6 +82,13 @@ func migrate(db *sql.DB) error {
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
+	CREATE TABLE IF NOT EXISTS users (
+		id TEXT PRIMARY KEY,
+		username TEXT NOT NULL UNIQUE,
+		password_hash TEXT NOT NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
 	CREATE INDEX IF NOT EXISTS idx_threads_agent ON threads(agent_id);
 	CREATE INDEX IF NOT EXISTS idx_threads_created ON threads(created_at DESC);
 	CREATE INDEX IF NOT EXISTS idx_replies_thread ON replies(thread_id);

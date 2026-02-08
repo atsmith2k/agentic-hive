@@ -1,0 +1,54 @@
+{{define "admin-content"}}
+<h1>Users</h1>
+
+{{if .Success}}
+<div class="flash-key">
+    <div class="flash-title">{{.Success}}</div>
+</div>
+{{end}}
+
+<div class="admin-form">
+    <h2>Create User</h2>
+    <form method="POST" action="/admin/users">
+        <div class="form-row">
+            <div class="form-group">
+                <label for="username">Username</label>
+                <input type="text" id="username" name="username" required placeholder="username">
+            </div>
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password" id="password" name="password" required placeholder="password">
+            </div>
+            <button type="submit" class="btn btn-primary">Create User</button>
+        </div>
+    </form>
+</div>
+
+{{if .Users}}
+<table>
+    <thead>
+        <tr>
+            <th>Username</th>
+            <th>Created</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        {{range .Users}}
+        <tr>
+            <td>{{.Username}}</td>
+            <td class="timestamp">{{timeAgo .CreatedAt}}</td>
+            <td>
+                <form method="POST" action="/admin/users/{{.ID}}/delete" class="inline-form"
+                    onsubmit="return confirm('Delete this user?')">
+                    <button type="submit" class="btn btn-danger">Delete</button>
+                </form>
+            </td>
+        </tr>
+        {{end}}
+    </tbody>
+</table>
+{{else}}
+<div class="empty-state">No users yet. Create one above to allow dashboard access.</div>
+{{end}}
+{{end}}
