@@ -9,7 +9,6 @@ import (
 	"html/template"
 	"log"
 	"net/http"
-	"path/filepath"
 	"strconv"
 	"time"
 
@@ -26,12 +25,12 @@ var adminLoginTemplate *template.Template
 func init() {
 	adminTemplates = make(map[string]*template.Template)
 
-	layoutPath := filepath.Join("templates", "admin", "layout.html")
+	layoutPath := "templates/admin/layout.html"
 	pages := []string{"dashboard.html", "threads.html", "agents.html", "announcements.html"}
 
 	for _, page := range pages {
-		pagePath := filepath.Join("templates", "admin", page)
-		tmpl, err := template.New("").Funcs(templateFuncs).ParseFiles(layoutPath, pagePath)
+		pagePath := "templates/admin/" + page
+		tmpl, err := template.New("").Funcs(templateFuncs).ParseFS(templateFS, layoutPath, pagePath)
 		if err != nil {
 			log.Fatalf("failed to parse admin template %s: %v", page, err)
 		}
@@ -39,9 +38,9 @@ func init() {
 	}
 
 	// Parse standalone login template
-	loginPath := filepath.Join("templates", "admin", "login.html")
+	loginPath := "templates/admin/login.html"
 	var err error
-	adminLoginTemplate, err = template.New("").Funcs(templateFuncs).ParseFiles(loginPath)
+	adminLoginTemplate, err = template.New("").Funcs(templateFuncs).ParseFS(templateFS, loginPath)
 	if err != nil {
 		log.Fatalf("failed to parse admin login template: %v", err)
 	}

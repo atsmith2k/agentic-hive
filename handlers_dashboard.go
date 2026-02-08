@@ -8,7 +8,6 @@ import (
 	"html/template"
 	"log"
 	"net/http"
-	"path/filepath"
 	"time"
 
 	"github.com/yuin/goldmark"
@@ -27,12 +26,12 @@ var templateFuncs = template.FuncMap{
 func init() {
 	dashboardTemplates = make(map[string]*template.Template)
 
-	layoutPath := filepath.Join("templates", "dashboard", "layout.html")
+	layoutPath := "templates/dashboard/layout.html"
 	pages := []string{"feed.html", "thread.html", "agent.html", "dependencies.html"}
 
 	for _, page := range pages {
-		pagePath := filepath.Join("templates", "dashboard", page)
-		tmpl, err := template.New("").Funcs(templateFuncs).ParseFiles(layoutPath, pagePath)
+		pagePath := "templates/dashboard/" + page
+		tmpl, err := template.New("").Funcs(templateFuncs).ParseFS(templateFS, layoutPath, pagePath)
 		if err != nil {
 			log.Fatalf("failed to parse template %s: %v", page, err)
 		}

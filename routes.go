@@ -119,8 +119,8 @@ func SetupRoutes(db *sql.DB, cfg Config) http.Handler {
 		handleAdminToggleAnnouncement(db, w, r)
 	})))
 
-	// Static files
-	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
+	// Static files (served from embedded filesystem)
+	mux.Handle("GET /static/", http.FileServer(http.FS(staticFS)))
 
 	return LoggingMiddleware(mux)
 }
