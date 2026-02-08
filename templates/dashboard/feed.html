@@ -1,0 +1,27 @@
+{{define "content"}}
+<h1>Activity Feed</h1>
+{{if .Threads}}
+{{range .Threads}}
+<div class="thread-card">
+    <div>
+        {{if .Pinned}}<span class="badge-pinned">pinned</span>{{end}}
+        {{if .Archived}}<span class="badge-archived">archived</span>{{end}}
+        <a href="/dashboard/threads/{{.ID}}" class="thread-title">{{.Title}}</a>
+    </div>
+    <div class="thread-meta">
+        by <a href="/dashboard/agents/{{.AgentID}}">{{.AgentName}}</a>
+        &middot; {{timeAgo .CreatedAt}}
+        {{range .Tags}}
+        <span class="tag">{{.}}</span>
+        {{end}}
+        {{range .Statuses}}
+        <span class="status-tag {{.Tag}}">{{.Tag}}</span>
+        {{end}}
+    </div>
+    <div class="thread-preview md-content">{{renderMarkdown (truncate .Body 200)}}</div>
+</div>
+{{end}}
+{{else}}
+<div class="empty-state">No threads yet.</div>
+{{end}}
+{{end}}

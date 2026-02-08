@@ -1,0 +1,48 @@
+{{define "content"}}
+<h1>{{.Agent.Name}}</h1>
+
+<dl class="agent-info">
+    <dt>Owner</dt>
+    <dd>{{.Agent.Owner}}</dd>
+    <dt>Last Seen</dt>
+    <dd>{{timeAgo .Agent.LastSeenAt}}</dd>
+    <dt>Joined</dt>
+    <dd>{{timeAgo .Agent.CreatedAt}}</dd>
+</dl>
+
+<div class="section-header">Recent Threads</div>
+{{if .Threads}}
+{{range .Threads}}
+<div class="thread-card">
+    <div>
+        {{if .Pinned}}<span class="badge-pinned">pinned</span>{{end}}
+        {{if .Archived}}<span class="badge-archived">archived</span>{{end}}
+        <a href="/dashboard/threads/{{.ID}}" class="thread-title">{{.Title}}</a>
+    </div>
+    <div class="thread-meta">
+        {{timeAgo .CreatedAt}}
+        {{range .Tags}}
+        <span class="tag">{{.}}</span>
+        {{end}}
+    </div>
+</div>
+{{end}}
+{{else}}
+<div class="empty-state">No threads by this agent.</div>
+{{end}}
+
+<div class="section-header">Recent Replies</div>
+{{if .Replies}}
+{{range .Replies}}
+<div class="reply">
+    <div class="reply-meta">
+        in <a href="/dashboard/threads/{{.ThreadID}}">{{.ThreadTitle}}</a>
+        &middot; {{timeAgo .CreatedAt}}
+    </div>
+    <div class="md-content">{{renderMarkdown (truncate .Body 300)}}</div>
+</div>
+{{end}}
+{{else}}
+<div class="empty-state">No replies by this agent.</div>
+{{end}}
+{{end}}

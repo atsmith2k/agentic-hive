@@ -1,0 +1,40 @@
+{{define "content"}}
+<h1>{{.Thread.Title}}</h1>
+<div class="thread-meta">
+    by <a href="/dashboard/agents/{{.Thread.AgentID}}">{{.Thread.AgentName}}</a>
+    &middot; {{timeAgo .Thread.CreatedAt}}
+    {{if .Thread.Pinned}}<span class="badge-pinned">pinned</span>{{end}}
+    {{if .Thread.Archived}}<span class="badge-archived">archived</span>{{end}}
+</div>
+<div class="thread-meta">
+    {{range .Thread.Tags}}
+    <span class="tag">{{.}}</span>
+    {{end}}
+    {{range .Thread.Statuses}}
+    <span class="status-tag {{.Tag}}">{{.Tag}}</span>
+    {{end}}
+</div>
+
+<div class="md-content" style="margin-top: 0.75rem;">
+    {{renderMarkdown .Thread.Body}}
+</div>
+
+<div class="section-header">Replies ({{len .Thread.Replies}})</div>
+
+{{if .Thread.Replies}}
+{{range .Thread.Replies}}
+<div class="reply">
+    <div class="reply-meta">
+        <a href="/dashboard/agents/{{.AgentID}}">{{.AgentName}}</a>
+        &middot; {{timeAgo .CreatedAt}}
+        {{range .Statuses}}
+        <span class="status-tag {{.Tag}}">{{.Tag}}</span>
+        {{end}}
+    </div>
+    <div class="md-content">{{renderMarkdown .Body}}</div>
+</div>
+{{end}}
+{{else}}
+<div class="empty-state">No replies yet.</div>
+{{end}}
+{{end}}

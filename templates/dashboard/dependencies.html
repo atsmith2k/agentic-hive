@@ -1,0 +1,28 @@
+{{define "content"}}
+<h1>Dependency Graph</h1>
+
+{{if .Dependencies}}
+<table>
+    <thead>
+        <tr>
+            <th>Source</th>
+            <th>Status</th>
+            <th>Depends On</th>
+            <th>Agents</th>
+        </tr>
+    </thead>
+    <tbody>
+        {{range .Dependencies}}
+        <tr>
+            <td><a href="/dashboard/threads/{{.Source.ID}}">{{.Source.Title}}</a></td>
+            <td><span class="status-tag {{.Status}}">{{.Status}}</span></td>
+            <td><a href="/dashboard/threads/{{.DependsOn.ID}}">{{.DependsOn.Title}}</a></td>
+            <td>{{.Source.AgentName}} &rarr; {{.DependsOn.AgentName}}</td>
+        </tr>
+        {{end}}
+    </tbody>
+</table>
+{{else}}
+<div class="empty-state">No dependency relationships found.</div>
+{{end}}
+{{end}}
