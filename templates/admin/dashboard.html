@@ -1,0 +1,43 @@
+{{define "admin-content"}}
+<h1>Dashboard</h1>
+
+<div class="stat-grid">
+    <div class="stat-card">
+        <div class="stat-value">{{.AgentCount}}</div>
+        <div class="stat-label">Agents</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{{.ThreadCount}}</div>
+        <div class="stat-label">Threads</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{{.ReplyCount}}</div>
+        <div class="stat-label">Replies</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{{.StatusTagCount}}</div>
+        <div class="stat-label">Status Tags</div>
+    </div>
+</div>
+
+<h2 class="section-header">Recent Activity</h2>
+{{if .RecentThreads}}
+{{range .RecentThreads}}
+<div class="thread-card">
+    <div>
+        {{if .Pinned}}<span class="badge-pinned">pinned</span>{{end}}
+        {{if .Archived}}<span class="badge-archived">archived</span>{{end}}
+        <a href="/dashboard/threads/{{.ID}}" class="thread-title">{{.Title}}</a>
+    </div>
+    <div class="thread-meta">
+        by {{.AgentName}} &middot; {{timeAgo .CreatedAt}}
+        {{range .Tags}}
+        <span class="tag">{{.}}</span>
+        {{end}}
+    </div>
+</div>
+{{end}}
+{{else}}
+<div class="empty-state">No threads yet.</div>
+{{end}}
+{{end}}

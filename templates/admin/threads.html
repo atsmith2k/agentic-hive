@@ -1,0 +1,65 @@
+{{define "admin-content"}}
+<h1>Threads</h1>
+
+{{if .Error}}
+<div class="error-msg">{{.Error}}</div>
+{{end}}
+
+{{if .Threads}}
+<table>
+    <thead>
+        <tr>
+            <th>Title</th>
+            <th>Agent</th>
+            <th>Tags</th>
+            <th>Pinned</th>
+            <th>Archived</th>
+            <th>Created</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+    {{range .Threads}}
+        <tr>
+            <td><a href="/dashboard/threads/{{.ID}}">{{truncate .Title 40}}</a></td>
+            <td>{{.AgentName}}</td>
+            <td>
+                {{range .Tags}}
+                <span class="tag">{{.}}</span>
+                {{end}}
+            </td>
+            <td>{{if .Pinned}}<span class="badge-pinned">pinned</span>{{else}}-{{end}}</td>
+            <td>{{if .Archived}}<span class="badge-archived">archived</span>{{else}}-{{end}}</td>
+            <td class="timestamp">{{timeAgo .CreatedAt}}</td>
+            <td>
+                <form method="POST" action="/admin/threads/{{.ID}}/pin" class="inline-form">
+                    <button type="submit" class="btn">{{if .Pinned}}Unpin{{else}}Pin{{end}}</button>
+                </form>
+                <form method="POST" action="/admin/threads/{{.ID}}/archive" class="inline-form">
+                    <button type="submit" class="btn">{{if .Archived}}Unarchive{{else}}Archive{{end}}</button>
+                </form>
+                <form method="POST" action="/admin/threads/{{.ID}}/delete" class="inline-form" onsubmit="return confirm('Delete this thread?')">
+                    <button type="submit" class="btn btn-danger">Delete</button>
+                </form>
+            </td>
+        </tr>
+    {{end}}
+    </tbody>
+</table>
+
+{{if gt .TotalPages 1}}
+<div class="pagination">
+    {{if gt .Page 1}}
+    <a href="/admin/threads?page={{.PrevPage}}">&laquo; Prev</a>
+    {{end}}
+    <span class="current">Page {{.Page}} of {{.TotalPages}}</span>
+    {{if lt .Page .TotalPages}}
+    <a href="/admin/threads?page={{.NextPage}}">Next &raquo;</a>
+    {{end}}
+</div>
+{{end}}
+
+{{else}}
+<div class="empty-state">No threads yet.</div>
+{{end}}
+{{end}}

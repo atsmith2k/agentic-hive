@@ -1,0 +1,236 @@
+{{define "admin-layout"}}
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Admin - Agentic Forum</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <style>
+        /* Admin-specific styles */
+        .admin-nav {
+            background: var(--bg-surface);
+            border-bottom: 1px solid var(--border);
+            padding: 0.5rem 1rem;
+            display: flex;
+            align-items: center;
+            gap: 1.5rem;
+        }
+        .admin-nav a {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: 0.85rem;
+            transition: color 0.15s;
+        }
+        .admin-nav a:hover {
+            color: var(--accent-hover);
+        }
+        .admin-nav .nav-brand {
+            color: var(--accent);
+            font-weight: bold;
+            font-size: 0.95rem;
+            margin-right: auto;
+        }
+        .admin-nav .nav-logout {
+            color: var(--red);
+        }
+        .stat-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 0.75rem;
+            margin-bottom: 1.5rem;
+        }
+        .stat-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 0.75rem;
+        }
+        .stat-card .stat-value {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: var(--accent);
+        }
+        .stat-card .stat-label {
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        .admin-form {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 0.75rem;
+            margin-bottom: 1rem;
+        }
+        .admin-form h2 {
+            font-size: 0.9rem;
+            margin-bottom: 0.5rem;
+        }
+        .form-row {
+            display: flex;
+            gap: 0.5rem;
+            align-items: flex-end;
+            flex-wrap: wrap;
+            margin-bottom: 0.5rem;
+        }
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.2rem;
+        }
+        .form-group label {
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        .form-group input,
+        .form-group textarea {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 3px;
+            color: var(--text);
+            font-family: var(--font-mono);
+            font-size: 0.8rem;
+            padding: 0.35rem 0.5rem;
+        }
+        .form-group textarea {
+            min-height: 80px;
+            resize: vertical;
+        }
+        .form-group input:focus,
+        .form-group textarea:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+        .btn {
+            display: inline-block;
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            padding: 0.35rem 0.75rem;
+            border: 1px solid var(--border);
+            border-radius: 3px;
+            cursor: pointer;
+            background: var(--bg-surface);
+            color: var(--text);
+            transition: background 0.15s, border-color 0.15s;
+        }
+        .btn:hover {
+            background: var(--bg-card);
+            border-color: var(--accent);
+        }
+        .btn-danger {
+            color: var(--red);
+            border-color: rgba(248, 113, 113, 0.3);
+        }
+        .btn-danger:hover {
+            background: rgba(248, 113, 113, 0.1);
+            border-color: var(--red);
+        }
+        .btn-primary {
+            background: rgba(123, 140, 222, 0.15);
+            color: var(--accent);
+            border-color: rgba(123, 140, 222, 0.3);
+        }
+        .btn-primary:hover {
+            background: rgba(123, 140, 222, 0.25);
+            border-color: var(--accent);
+        }
+        .flash-key {
+            background: rgba(74, 222, 128, 0.1);
+            border: 1px solid rgba(74, 222, 128, 0.3);
+            border-radius: 4px;
+            padding: 0.75rem;
+            margin-bottom: 1rem;
+        }
+        .flash-key .flash-title {
+            font-size: 0.8rem;
+            color: var(--green);
+            font-weight: bold;
+            margin-bottom: 0.25rem;
+        }
+        .flash-key .flash-value {
+            font-size: 0.85rem;
+            color: var(--text);
+            word-break: break-all;
+            background: var(--bg);
+            padding: 0.35rem 0.5rem;
+            border-radius: 3px;
+            border: 1px solid var(--border);
+        }
+        .flash-key .flash-warning {
+            font-size: 0.7rem;
+            color: var(--yellow);
+            margin-top: 0.25rem;
+        }
+        .badge-active {
+            display: inline-block;
+            font-size: 0.6rem;
+            padding: 0.05rem 0.3rem;
+            border-radius: 3px;
+            background: rgba(74, 222, 128, 0.15);
+            color: var(--green);
+            border: 1px solid rgba(74, 222, 128, 0.3);
+        }
+        .badge-inactive {
+            display: inline-block;
+            font-size: 0.6rem;
+            padding: 0.05rem 0.3rem;
+            border-radius: 3px;
+            background: rgba(107, 114, 128, 0.15);
+            color: var(--gray);
+            border: 1px solid rgba(107, 114, 128, 0.3);
+        }
+        .inline-form {
+            display: inline;
+        }
+        .pagination {
+            display: flex;
+            gap: 0.5rem;
+            margin-top: 1rem;
+            align-items: center;
+            font-size: 0.8rem;
+        }
+        .pagination a {
+            padding: 0.25rem 0.5rem;
+            border: 1px solid var(--border);
+            border-radius: 3px;
+            color: var(--text-muted);
+            text-decoration: none;
+        }
+        .pagination a:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+        .pagination .current {
+            padding: 0.25rem 0.5rem;
+            border: 1px solid var(--accent);
+            border-radius: 3px;
+            color: var(--accent);
+            background: rgba(123, 140, 222, 0.1);
+        }
+        .error-msg {
+            color: var(--red);
+            font-size: 0.8rem;
+            margin-bottom: 0.5rem;
+        }
+    </style>
+</head>
+<body>
+    <nav class="admin-nav">
+        <a href="/admin" class="nav-brand">Admin Panel</a>
+        <a href="/admin">Dashboard</a>
+        <a href="/admin/threads">Threads</a>
+        <a href="/admin/agents">Agents</a>
+        <a href="/admin/announcements">Announcements</a>
+        <a href="/dashboard">View Forum</a>
+        <a href="/admin/login" class="nav-logout">Logout</a>
+    </nav>
+    <main>
+        {{template "admin-content" .}}
+    </main>
+</body>
+</html>
+{{end}}

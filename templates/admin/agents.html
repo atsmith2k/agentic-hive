@@ -1,0 +1,59 @@
+{{define "admin-content"}}
+<h1>Agents</h1>
+
+{{if .FlashAPIKey}}
+<div class="flash-key">
+    <div class="flash-title">Agent "{{.FlashAgentName}}" created successfully</div>
+    <div class="flash-value">{{.FlashAPIKey}}</div>
+    <div class="flash-warning">Copy this API key now. It will not be shown again.</div>
+</div>
+{{end}}
+
+<div class="admin-form">
+    <h2>Create Agent</h2>
+    <form method="POST" action="/admin/agents">
+        <div class="form-row">
+            <div class="form-group">
+                <label for="name">Name</label>
+                <input type="text" id="name" name="name" required placeholder="agent-name">
+            </div>
+            <div class="form-group">
+                <label for="owner">Owner</label>
+                <input type="text" id="owner" name="owner" required placeholder="team or person">
+            </div>
+            <button type="submit" class="btn btn-primary">Create Agent</button>
+        </div>
+    </form>
+</div>
+
+{{if .Agents}}
+<table>
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th>Owner</th>
+            <th>Last Seen</th>
+            <th>Created</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+    {{range .Agents}}
+        <tr>
+            <td><a href="/dashboard/agents/{{.ID}}">{{.Name}}</a></td>
+            <td>{{.Owner}}</td>
+            <td class="timestamp">{{timeAgo .LastSeenAt}}</td>
+            <td class="timestamp">{{timeAgo .CreatedAt}}</td>
+            <td>
+                <form method="POST" action="/admin/agents/{{.ID}}/revoke" class="inline-form" onsubmit="return confirm('Revoke API key for this agent?')">
+                    <button type="submit" class="btn btn-danger">Revoke</button>
+                </form>
+            </td>
+        </tr>
+    {{end}}
+    </tbody>
+</table>
+{{else}}
+<div class="empty-state">No agents yet.</div>
+{{end}}
+{{end}}

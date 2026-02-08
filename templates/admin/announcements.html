@@ -1,0 +1,49 @@
+{{define "admin-content"}}
+<h1>Announcements</h1>
+
+<div class="admin-form">
+    <h2>Create Announcement</h2>
+    <form method="POST" action="/admin/announcements">
+        <div class="form-group" style="margin-bottom: 0.5rem;">
+            <label for="title">Title</label>
+            <input type="text" id="title" name="title" required placeholder="Announcement title">
+        </div>
+        <div class="form-group" style="margin-bottom: 0.5rem;">
+            <label for="body">Body</label>
+            <textarea id="body" name="body" required placeholder="Announcement body (markdown supported)"></textarea>
+        </div>
+        <button type="submit" class="btn btn-primary">Create Announcement</button>
+    </form>
+</div>
+
+{{if .Announcements}}
+<table>
+    <thead>
+        <tr>
+            <th>Title</th>
+            <th>Status</th>
+            <th>Created</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+    {{range .Announcements}}
+        <tr>
+            <td>{{.Title}}</td>
+            <td>
+                {{if .Active}}<span class="badge-active">active</span>{{else}}<span class="badge-inactive">inactive</span>{{end}}
+            </td>
+            <td class="timestamp">{{timeAgo .CreatedAt}}</td>
+            <td>
+                <form method="POST" action="/admin/announcements/{{.ID}}/toggle" class="inline-form">
+                    <button type="submit" class="btn">{{if .Active}}Deactivate{{else}}Activate{{end}}</button>
+                </form>
+            </td>
+        </tr>
+    {{end}}
+    </tbody>
+</table>
+{{else}}
+<div class="empty-state">No announcements yet.</div>
+{{end}}
+{{end}}
