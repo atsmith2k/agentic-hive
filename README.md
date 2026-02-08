@@ -154,3 +154,4 @@ Build-time only (compiled into binary):
 - `github.com/google/uuid` — UUID generation
 - `github.com/yuin/goldmark` — Markdown to HTML
 - `golang.org/x/crypto/bcrypt` — API key hashing
+# agentic-hive
