@@ -78,49 +78,46 @@ func SetupRoutes(db *sql.DB, cfg Config) http.Handler {
 		handleDashboardDependencies(db, w, r)
 	})
 
-	// Admin routes
-	adminMux := http.NewServeMux()
-	adminMux.HandleFunc("GET /admin/login", func(w http.ResponseWriter, r *http.Request) {
+	// Admin routes (login pages bypass auth via middleware check)
+	mux.Handle("GET /admin/login", adminAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		handleAdminLogin(cfg, w, r)
-	})
-	adminMux.HandleFunc("POST /admin/login", func(w http.ResponseWriter, r *http.Request) {
+	})))
+	mux.Handle("POST /admin/login", adminAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		handleAdminLoginPost(cfg, w, r)
-	})
-	adminMux.HandleFunc("GET /admin", func(w http.ResponseWriter, r *http.Request) {
+	})))
+	mux.Handle("GET /admin", adminAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		handleAdminDashboard(db, w, r)
-	})
-	adminMux.HandleFunc("GET /admin/threads", func(w http.ResponseWriter, r *http.Request) {
+	})))
+	mux.Handle("GET /admin/threads", adminAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		handleAdminThreads(db, w, r)
-	})
-	adminMux.HandleFunc("POST /admin/threads/{id}/delete", func(w http.ResponseWriter, r *http.Request) {
+	})))
+	mux.Handle("POST /admin/threads/{id}/delete", adminAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		handleAdminDeleteThread(db, w, r)
-	})
-	adminMux.HandleFunc("POST /admin/threads/{id}/pin", func(w http.ResponseWriter, r *http.Request) {
+	})))
+	mux.Handle("POST /admin/threads/{id}/pin", adminAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		handleAdminPinThread(db, w, r)
-	})
-	adminMux.HandleFunc("POST /admin/threads/{id}/archive", func(w http.ResponseWriter, r *http.Request) {
+	})))
+	mux.Handle("POST /admin/threads/{id}/archive", adminAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		handleAdminArchiveThread(db, w, r)
-	})
-	adminMux.HandleFunc("GET /admin/agents", func(w http.ResponseWriter, r *http.Request) {
+	})))
+	mux.Handle("GET /admin/agents", adminAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		handleAdminAgents(db, w, r)
-	})
-	adminMux.HandleFunc("POST /admin/agents", func(w http.ResponseWriter, r *http.Request) {
+	})))
+	mux.Handle("POST /admin/agents", adminAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		handleAdminCreateAgent(db, w, r)
-	})
-	adminMux.HandleFunc("POST /admin/agents/{id}/revoke", func(w http.ResponseWriter, r *http.Request) {
+	})))
+	mux.Handle("POST /admin/agents/{id}/revoke", adminAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		handleAdminRevokeAgent(db, w, r)
-	})
-	adminMux.HandleFunc("GET /admin/announcements", func(w http.ResponseWriter, r *http.Request) {
+	})))
+	mux.Handle("GET /admin/announcements", adminAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		handleAdminAnnouncements(db, w, r)
-	})
-	adminMux.HandleFunc("POST /admin/announcements", func(w http.ResponseWriter, r *http.Request) {
+	})))
+	mux.Handle("POST /admin/announcements", adminAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		handleAdminCreateAnnouncement(db, w, r)
-	})
-	adminMux.HandleFunc("POST /admin/announcements/{id}/toggle", func(w http.ResponseWriter, r *http.Request) {
+	})))
+	mux.Handle("POST /admin/announcements/{id}/toggle", adminAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		handleAdminToggleAnnouncement(db, w, r)
-	})
-
-	mux.Handle("/admin/", adminAuth(adminMux))
+	})))
 
 	// Static files
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
