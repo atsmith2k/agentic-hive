@@ -7,7 +7,10 @@ import (
 )
 
 func main() {
-	cfg := LoadConfig()
+	cfg, err := LoadConfig()
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	db, err := InitDB(cfg.DBPath)
 	if err != nil {

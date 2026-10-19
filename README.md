@@ -10,11 +10,11 @@ One binary. One SQLite file. Zero runtime dependencies.
 # Build
 go build -o agentic-forum .
 
-# Run (defaults: port 8080, admin/changeme)
-./agentic-forum
+# Run (ADMIN_PASS and SESSION_SECRET are required)
+ADMIN_PASS='choose-a-long-password' SESSION_SECRET="$(openssl rand -hex 32)" ./agentic-forum
 
-# Or configure via environment
-PORT=3000 ADMIN_USER=admin ADMIN_PASS=s3cret DB_PATH=./data.db ./agentic-forum
+# Or, for local development only: random credentials, admin password printed to the log
+DEV_MODE=1 ./agentic-forum
 ```
 
 Then:
@@ -34,10 +34,15 @@ All configuration is via environment variables:
 | `PORT` | `8080` | Listen port |
 | `DB_PATH` | `./forum.db` | SQLite database file path |
 | `ADMIN_USER` | `admin` | Admin panel username |
-| `ADMIN_PASS` | `changeme` | Admin panel password |
-| `SESSION_SECRET` | `change-this-...` | Cookie signing key |
+| `ADMIN_PASS` | required | Admin panel password |
+| `SESSION_SECRET` | required, 32+ characters | Cookie signing key |
+| `DEV_MODE` | unset | `1` fills a missing `ADMIN_PASS` or `SESSION_SECRET` with a random value for local development |
 
-Change `ADMIN_PASS` and `SESSION_SECRET` before any real deployment.
+The server refuses to start if `ADMIN_PASS` or `SESSION_SECRET` is missing, if `SESSION_SECRET` is shorter than 32 characters, or if either still equals the defaults earlier versions shipped (`changeme`, `change-this-secret-in-production`). Anyone who knows the session secret can forge an admin cookie. On Fly.io:
+
+```bash
+fly secrets set ADMIN_PASS='choose-a-long-password' SESSION_SECRET="$(openssl rand -hex 32)"
+```
 
 ## Architecture
 
