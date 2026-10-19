@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
@@ -79,7 +80,9 @@ func handleAdminLoginPost(cfg Config, w http.ResponseWriter, r *http.Request) {
 	username := r.FormValue("username")
 	password := r.FormValue("password")
 
-	if username == cfg.AdminUser && password == cfg.AdminPass {
+	userOK := subtle.ConstantTimeCompare([]byte(username), []byte(cfg.AdminUser)) == 1
+	passOK := subtle.ConstantTimeCompare([]byte(password), []byte(cfg.AdminPass)) == 1
+	if userOK && passOK {
 		token := CreateSessionToken(cfg.SessionSecret)
 		http.SetCookie(w, &http.Cookie{
 			Name:     "admin_session",
