@@ -1,80 +1,151 @@
 package main
 
 import (
-	"crypto/rand"
 	"fmt"
-	"log"
+	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
-// Values that earlier versions shipped as defaults. They are public, so they are always rejected.
-const (
-	publishedAdminPass     = "changeme"
-	publishedSessionSecret = "change-this-secret-in-production"
-	minSessionSecretLen    = 32
-)
-
+// Config is everything the server reads from the environment. See .env.example.
 type Config struct {
-	Port          string
-	DBPath        string
-	AdminUser     string
-	AdminPass     string
-	SessionSecret string
+	Host    string // interface to bind; loopback by default because a proxy terminates TLS
+	Port    string
+	BaseURL string // public origin, e.g. https://hive.johnnycode.ai (no trailing slash)
+	DBPath  string
+	DevMode bool
+
+	AllowedDomains []string // email domains whose mailboxes may sign in
+	AllowedEmails  []string // individual addresses allowed in addition to the domains
+	AdminEmails    []string
+
+	RemailBaseURL string
+	RemailAPIKey  string
+	RemailFrom    string
+
+	FrameAncestors string // CSP frame-ancestors source list
+	TrustProxy     bool   // take the client address from X-Forwarded-For
 }
 
-// LoadConfig reads configuration from the environment. ADMIN_PASS and
-// SESSION_SECRET have no defaults; with DEV_MODE=1, missing values are
-// replaced by random ones for local development.
 func LoadConfig() (Config, error) {
 	cfg := Config{
-		Port:          envOrDefault("PORT", "8080"),
-		DBPath:        envOrDefault("DB_PATH", "./forum.db"),
-		AdminUser:     envOrDefault("ADMIN_USER", "admin"),
-		AdminPass:     strings.TrimSpace(os.Getenv("ADMIN_PASS")),
-		SessionSecret: strings.TrimSpace(os.Getenv("SESSION_SECRET")),
+		Host:           envOr("HOST", "127.0.0.1"),
+		Port:           envOr("PORT", "8080"),
+		BaseURL:        strings.TrimRight(env("BASE_URL"), "/"),
+		DBPath:         envOr("DB_PATH", defaultDBPath()),
+		DevMode:        env("DEV_MODE") == "1",
+		AllowedDomains: envList("ALLOWED_EMAIL_DOMAINS", "johnnycode.ai"),
+		AllowedEmails:  envList("ALLOWED_EMAILS", ""),
+		AdminEmails:    envList("ADMIN_EMAILS", ""),
+		RemailBaseURL:  strings.TrimRight(envOr("REMAIL_BASE_URL", "https://remail.foo"), "/"),
+		RemailAPIKey:   env("REMAIL_API_KEY"),
+		RemailFrom:     env("REMAIL_FROM"),
+		FrameAncestors: envOr("FRAME_ANCESTORS", "'none'"),
 	}
-
-	if strings.TrimSpace(os.Getenv("DEV_MODE")) == "1" {
-		if cfg.AdminPass == "" {
-			cfg.AdminPass = rand.Text()
-			log.Printf("DEV_MODE: generated admin password for this run: %s", cfg.AdminPass)
-		}
-		if cfg.SessionSecret == "" {
-			cfg.SessionSecret = rand.Text() + rand.Text()
-			log.Printf("DEV_MODE: generated a random SESSION_SECRET; sessions end when the server restarts")
-		}
+	if v := env("TRUST_PROXY"); v != "" {
+		cfg.TrustProxy = v == "1"
+	} else {
+		cfg.TrustProxy = cfg.Host == "127.0.0.1" || cfg.Host == "localhost" || cfg.Host == "::1"
 	}
-
+	if cfg.DevMode && cfg.BaseURL == "" {
+		cfg.BaseURL = "http://localhost:" + cfg.Port
+	}
 	return cfg, cfg.validate()
 }
 
 func (c Config) validate() error {
 	var problems []string
-	switch c.AdminPass {
-	case "":
-		problems = append(problems, "ADMIN_PASS is not set")
-	case publishedAdminPass:
-		problems = append(problems, "ADMIN_PASS is the published default")
-	}
+	u, err := url.Parse(c.BaseURL)
 	switch {
-	case c.SessionSecret == "":
-		problems = append(problems, "SESSION_SECRET is not set")
-	case c.SessionSecret == publishedSessionSecret:
-		problems = append(problems, "SESSION_SECRET is the published default")
-	case len(c.SessionSecret) < minSessionSecretLen:
-		problems = append(problems, fmt.Sprintf("SESSION_SECRET must be at least %d characters", minSessionSecretLen))
+	case c.BaseURL == "":
+		problems = append(problems, "BASE_URL is not set (the public https origin, used in sign-in links)")
+	case err != nil || u.Host == "" || u.Path != "" || u.RawQuery != "":
+		problems = append(problems, "BASE_URL must be an origin such as https://hive.example.com")
+	case u.Scheme != "https" && !c.DevMode:
+		problems = append(problems, "BASE_URL must use https")
+	}
+	if len(c.AllowedDomains) == 0 && len(c.AllowedEmails) == 0 {
+		problems = append(problems, "nobody can sign in: set ALLOWED_EMAIL_DOMAINS or ALLOWED_EMAILS")
+	}
+	if !c.DevMode {
+		if c.RemailAPIKey == "" {
+			problems = append(problems, "REMAIL_API_KEY is not set (a sending_only Remail key)")
+		}
+		if c.RemailFrom == "" {
+			problems = append(problems, "REMAIL_FROM is not set (an address on a domain verified in Remail)")
+		}
+	}
+	for _, a := range c.AdminEmails {
+		if !c.EmailAllowed(a) {
+			problems = append(problems, fmt.Sprintf("ADMIN_EMAILS entry %q is not allowed to sign in", a))
+		}
 	}
 	if len(problems) > 0 {
-		return fmt.Errorf("refusing to start: %s. Set them in the environment (e.g. SESSION_SECRET=$(openssl rand -hex 32)), or use DEV_MODE=1 for local development",
+		return fmt.Errorf("refusing to start: %s. See .env.example; DEV_MODE=1 relaxes this for local development",
 			strings.Join(problems, "; "))
 	}
 	return nil
 }
 
-func envOrDefault(key, fallback string) string {
-	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+// EmailAllowed reports whether a normalized address may sign in.
+func (c Config) EmailAllowed(email string) bool {
+	for _, e := range c.AllowedEmails {
+		if e == email {
+			return true
+		}
+	}
+	_, domain, ok := strings.Cut(email, "@")
+	if !ok {
+		return false
+	}
+	for _, d := range c.AllowedDomains {
+		if d == domain {
+			return true
+		}
+	}
+	return false
+}
+
+func (c Config) IsAdmin(email string) bool {
+	for _, a := range c.AdminEmails {
+		if a == email {
+			return true
+		}
+	}
+	return false
+}
+
+func (c Config) secureCookies() bool { return strings.HasPrefix(c.BaseURL, "https://") }
+
+// defaultDBPath keeps the database outside the checkout, so a deploy that
+// replaces the release directory does not replace the data.
+func defaultDBPath() string {
+	if dir := env("XDG_STATE_HOME"); dir != "" {
+		return filepath.Join(dir, "agentic-hive", "hive.db")
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" && home != "/" {
+		return filepath.Join(home, ".local", "state", "agentic-hive", "hive.db")
+	}
+	return filepath.Join("data", "hive.db")
+}
+
+func env(key string) string { return strings.TrimSpace(os.Getenv(key)) }
+
+func envOr(key, fallback string) string {
+	if v := env(key); v != "" {
 		return v
 	}
 	return fallback
+}
+
+// envList reads a comma-separated list, lowercased, without empty entries.
+func envList(key, fallback string) []string {
+	var out []string
+	for _, v := range strings.Split(envOr(key, fallback), ",") {
+		if v = strings.ToLower(strings.TrimSpace(v)); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }

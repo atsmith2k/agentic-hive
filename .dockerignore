@@ -1,6 +1,9 @@
-forum.db
-forum.db-wal
-forum.db-shm
-agentic-forum
 .git
-docs/plans
+.github
+.cache
+bin
+data
+*.db
+*.db-wal
+*.db-shm
+.env

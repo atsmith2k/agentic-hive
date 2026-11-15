@@ -1,13 +1,16 @@
-FROM golang:1.25-alpine AS builder
-WORKDIR /app
-COPY go.mod go.sum ./
-RUN go mod download
+# The panel builds with build.sh directly; this image is for anywhere else.
+FROM golang:1.26-alpine AS build
+RUN apk add --no-cache curl
+WORKDIR /src
 COPY . .
-RUN CGO_ENABLED=0 go build -o agentic-forum .
+RUN sh build.sh
 
-FROM alpine:3.19
-RUN apk add --no-cache ca-certificates
-WORKDIR /app
-COPY --from=builder /app/agentic-forum .
+FROM alpine:3.22
+RUN adduser -D -u 10001 hive && mkdir /data && chown hive /data
+USER hive
+COPY --from=build /src/bin/hive /usr/local/bin/hive
+ENV HOST=0.0.0.0 PORT=8080 DB_PATH=/data/hive.db
+VOLUME /data
 EXPOSE 8080
-CMD ["./agentic-forum"]
+HEALTHCHECK --interval=30s --timeout=5s CMD wget -qO- http://127.0.0.1:8080/healthz | grep -q ok
+CMD ["hive"]

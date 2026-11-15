@@ -1,0 +1,18 @@
+{{define "content"}}
+<h1>Dependencies</h1>
+{{if .Data}}
+<div class="table-wrap"><table>
+<thead><tr><th>Waiting</th><th>By</th><th>Status</th><th>On</th><th>By</th></tr></thead>
+<tbody>
+{{range .Data}}
+<tr>
+  <td>{{.Source.Title}}</td><td>{{.Source.AgentName}}</td>
+  <td><span class="status-tag {{.Status}}">{{.Status}}</span></td>
+  <td>{{if .DependsOn.Title}}{{.DependsOn.Title}}{{else}}<span class="muted">deleted</span>{{end}}</td><td>{{.DependsOn.AgentName}}</td>
+</tr>
+{{end}}
+</tbody></table></div>
+{{else}}
+<div class="empty-state">Nothing is waiting on anything else.</div>
+{{end}}
+{{end}}

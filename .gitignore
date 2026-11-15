@@ -1,5 +1,7 @@
-forum.db
-forum.db-wal
-forum.db-shm
-agentic-forum
-.serena/
+/bin/
+/.cache/
+/data/
+*.db
+*.db-wal
+*.db-shm
+.env

@@ -1,4 +1,4 @@
-/* Agentic Forum - Terminal Aesthetic CSS */
+/* Agentic Hive */
 
 *,
 *::before,
@@ -369,3 +369,64 @@ tr:hover {
     color: var(--text-muted);
     font-size: 0.7rem;
 }
+
+/* Navigation extras */
+nav { flex-wrap: wrap; row-gap: 0.4rem; }
+nav form { display: inline; }
+.nav-user { color: var(--text-muted); font-size: 0.75rem; overflow-wrap: anywhere; }
+.link-button {
+    background: none; border: none; cursor: pointer; padding: 0;
+    color: var(--red); font-family: var(--font-mono); font-size: 0.85rem;
+}
+.link-button:hover { text-decoration: underline; }
+
+/* Panels and forms */
+.panel {
+    background: var(--bg-card); border: 1px solid var(--border); border-radius: 4px;
+    padding: 1.25rem; margin: 2rem auto;
+}
+.narrow { max-width: 420px; }
+.muted { color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.75rem; }
+.small { font-size: 0.75rem; margin-top: 1rem; }
+.error {
+    color: var(--red); font-size: 0.85rem; margin-bottom: 0.75rem;
+    border-left: 2px solid var(--red); padding-left: 0.6rem;
+}
+label {
+    display: block; font-size: 0.7rem; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.2rem;
+}
+input[type="text"], input[type="email"], input[type="search"], textarea {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 3px; color: var(--text);
+    font-family: var(--font-mono); font-size: 0.85rem; padding: 0.4rem 0.5rem; width: 100%; margin-bottom: 0.75rem;
+}
+input:focus-visible, textarea:focus-visible, .btn:focus-visible, .link-button:focus-visible, a:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 1px;
+}
+.btn {
+    font-family: var(--font-mono); font-size: 0.8rem; padding: 0.4rem 0.75rem; cursor: pointer;
+    border: 1px solid rgba(123, 140, 222, 0.4); border-radius: 3px;
+    background: rgba(123, 140, 222, 0.15); color: var(--accent); white-space: nowrap;
+}
+.btn:hover { background: rgba(123, 140, 222, 0.28); border-color: var(--accent); }
+.btn.danger { color: var(--red); border-color: rgba(248, 113, 113, 0.4); background: rgba(248, 113, 113, 0.1); }
+.btn.danger:hover { background: rgba(248, 113, 113, 0.22); border-color: var(--red); }
+form.inline { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin-bottom: 1rem; }
+form.inline label { margin: 0; }
+form.inline input { margin: 0; flex: 1 1 12rem; width: auto; }
+form.stack { max-width: 560px; margin-bottom: 1rem; }
+.page-head { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; }
+.page-head form.inline { margin-bottom: 0.75rem; flex: 0 1 22rem; }
+.actions { white-space: nowrap; text-align: right; }
+.actions form { display: inline-block; margin-left: 0.25rem; }
+.table-wrap { overflow-x: auto; }
+.thread-body { margin-top: 0.75rem; }
+.announcement {
+    border: 1px solid rgba(251, 191, 36, 0.4); background: rgba(251, 191, 36, 0.07);
+    border-radius: 4px; padding: 0.6rem 0.8rem; margin-bottom: 1rem; font-size: 0.85rem;
+}
+pre.secret {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 3px; padding: 0.6rem 0.75rem;
+    font-size: 0.8rem; white-space: pre-wrap; overflow-wrap: anywhere; margin-bottom: 0.75rem; user-select: all;
+}
+.md-content img { max-width: 100%; }
