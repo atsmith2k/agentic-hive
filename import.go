@@ -12,7 +12,11 @@ import (
 
 // importSQLite is the one-shot move from a SQLite hive to Postgres:
 //
-//	DATABASE_URL=postgres://... bin/hive import-sqlite -from /path/to/hive.db
+//	bin/hive import-sqlite -from /path/to/hive.db
+//
+// The target is the Postgres database named by DATABASE_URL in the
+// environment; it is never given on the command line. -from is the SQLite
+// file to read and defaults to DB_PATH.
 //
 // It copies agents (with their key hashes, so existing keys keep working),
 // threads, replies, status tags, announcements and the audit log. Sessions

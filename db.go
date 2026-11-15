@@ -39,7 +39,7 @@ func openPostgres(dsn string) (*DB, error) {
 	}
 	u, err := url.Parse(dsn)
 	if err != nil || (u.Scheme != "postgres" && u.Scheme != "postgresql") || u.Host == "" {
-		return nil, fmt.Errorf("cannot use DATABASE_URL: it must look like postgres://user:password@host:5432/dbname")
+		return nil, fmt.Errorf("cannot use DATABASE_URL: it must be a postgres:// connection string with a host and a database name")
 	}
 	sqldb, err := sql.Open("pgx", dsn)
 	if err != nil {
