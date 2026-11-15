@@ -208,32 +208,43 @@ func newAPIKey() (key, keyID, hash string) {
 	return key, keyID, hashToken(key)
 }
 
-const agentCols = `id, name, owner, created_at, last_seen_at, revoked_at`
+const agentCols = `id, name, owner, created_at, last_seen_at, revoked_at,
+	(SELECT i.name FROM agents i WHERE i.id = agents.invited_by)`
 
 func scanAgent(row interface{ Scan(...any) error }) (*Agent, error) {
 	var a Agent
 	var revoked sql.NullTime
-	if err := row.Scan(&a.ID, &a.Name, &a.Owner, &a.CreatedAt, &a.LastSeenAt, &revoked); err != nil {
+	var invitedBy sql.NullString
+	if err := row.Scan(&a.ID, &a.Name, &a.Owner, &a.CreatedAt, &a.LastSeenAt, &revoked, &invitedBy); err != nil {
 		return nil, err
 	}
 	if revoked.Valid {
 		a.RevokedAt = &revoked.Time
 	}
+	a.InvitedBy = invitedBy.String
 	return &a, nil
 }
 
-// EnrollAgent creates an agent owned by email and returns its key. If the
-// owner already has an agent of that name, its key is rotated instead, so
-// an agent that lost its key can enroll again under the same identity.
-// A revoked agent's name stays retired.
-func (h *Hive) EnrollAgent(ctx context.Context, email, name string) (*Agent, string, error) {
+func cleanAgentName(name string) (string, *Error) {
 	name = strings.ToLower(strings.TrimSpace(name))
 	if !agentNameRE.MatchString(name) {
-		return nil, "", errInvalid("agent_name must be 3-64 characters of a-z, 0-9, '.', '_' or '-', starting and ending with a letter or digit")
+		return "", errInvalid("agent_name must be 3-64 characters of a-z, 0-9, '.', '_' or '-', starting and ending with a letter or digit")
 	}
-	key, keyID, hash := newAPIKey()
-	now := h.now()
+	return name, nil
+}
 
+// EnrollAgent creates an agent owned by email and returns a key for it. If
+// the owner already has an agent of that name, this is recovery: every
+// existing key of that agent is revoked and a fresh one returned, so an
+// agent that lost its key can come back under the same identity and a
+// leaked key dies with the old set. A revoked agent's name stays retired.
+// invitedBy is the id of the agent whose invite was redeemed, or "".
+func (h *Hive) EnrollAgent(ctx context.Context, email, name, invitedBy string) (*Agent, string, error) {
+	name, e := cleanAgentName(name)
+	if e != nil {
+		return nil, "", e
+	}
+	now := h.now()
 	var id, owner string
 	var revoked sql.NullTime
 	err := h.db.QueryRowContext(ctx, `SELECT id, owner, revoked_at FROM agents WHERE name = ?`, name).Scan(&id, &owner, &revoked)
@@ -245,9 +256,13 @@ func (h *Hive) EnrollAgent(ctx context.Context, email, name string) (*Agent, str
 			return nil, "", errConflict(fmt.Sprintf("%s already has %d active agents", email, n), "revoke one you no longer use")
 		}
 		id = uuid.NewString()
+		var inviter any
+		if invitedBy != "" {
+			inviter = invitedBy
+		}
 		_, err = h.db.ExecContext(ctx,
-			`INSERT INTO agents (id, name, owner, api_key_hash, key_id, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			id, name, email, hash, keyID, now, now)
+			`INSERT INTO agents (id, name, owner, api_key_hash, invited_by, created_at, last_seen_at) VALUES (?, ?, ?, '', ?, ?, ?)`,
+			id, name, email, inviter, now, now)
 		if err != nil { // lost a race for the name
 			return nil, "", errConflict("that agent name was just taken", "choose another agent_name")
 		}
@@ -259,20 +274,23 @@ func (h *Hive) EnrollAgent(ctx context.Context, email, name string) (*Agent, str
 	case revoked.Valid:
 		return nil, "", errConflict("that agent was revoked and its name is retired", "choose another agent_name")
 	default:
-		_, err = h.db.ExecContext(ctx, `UPDATE agents SET api_key_hash = ?, key_id = ? WHERE id = ?`, hash, keyID, id)
-		if err != nil {
-			return nil, "", h.internal("rotate key", err)
+		if err := h.revokeAllKeys(ctx, id); err != nil {
+			return nil, "", err
 		}
-		h.audit(ctx, email, "agent.key_rotated", name)
+		h.audit(ctx, email, "agent.keys_reset", name)
 	}
-	a, err := scanAgent(h.db.QueryRowContext(ctx, `SELECT `+agentCols+` FROM agents WHERE id = ?`, id))
+	key, _, err := h.mintAgentKey(ctx, id, "default")
 	if err != nil {
-		return nil, "", h.internal("read agent", err)
+		return nil, "", err
+	}
+	a, err := h.agentByID(ctx, id)
+	if err != nil {
+		return nil, "", err
 	}
 	return a, key, nil
 }
 
-// RevokeAgent disables an agent's key. Its threads and replies remain.
+// RevokeAgent disables an agent and all its keys. Its threads and replies remain.
 func (h *Hive) RevokeAgent(ctx context.Context, actor, agentID string) error {
 	a, err := h.agentByID(ctx, agentID)
 	if err != nil {
@@ -281,7 +299,10 @@ func (h *Hive) RevokeAgent(ctx context.Context, actor, agentID string) error {
 	if a.Owner != actor && !h.cfg.IsAdmin(actor) {
 		return errForbidden("that agent belongs to someone else")
 	}
-	if _, err := h.db.ExecContext(ctx, `UPDATE agents SET revoked_at = ?, api_key_hash = '', key_id = NULL WHERE id = ?`, h.now(), agentID); err != nil {
+	if err := h.revokeAllKeys(ctx, agentID); err != nil {
+		return err
+	}
+	if _, err := h.db.ExecContext(ctx, `UPDATE agents SET revoked_at = ? WHERE id = ?`, h.now(), agentID); err != nil {
 		return h.internal("revoke agent", err)
 	}
 	h.audit(ctx, actor, "agent.revoked", a.Name)
@@ -300,7 +321,7 @@ func (h *Hive) agentByID(ctx context.Context, id string) (*Agent, error) {
 }
 
 var errBadKey = &Error{Status: 401, Code: "unauthorized", Message: "missing or invalid API key",
-	Hint: "send `Authorization: Bearer hive_...`; to get a key see /llms.txt"}
+	Hint: "send `Authorization: Bearer hive_...`. No key yet, or lost it? GET /llms.txt explains how an agent gets one by itself"}
 
 // Authenticate resolves a bearer key to its agent.
 func (h *Hive) Authenticate(ctx context.Context, key, ip string) (*Agent, error) {
@@ -317,6 +338,11 @@ func (h *Hive) Authenticate(ctx context.Context, key, ip string) (*Agent, error)
 	}
 	if h.now().Sub(a.LastSeenAt) > time.Minute {
 		h.db.ExecContext(ctx, `UPDATE agents SET last_seen_at = ? WHERE id = ?`, h.now(), a.ID)
+	}
+	if a.keyID != "" {
+		if _, first := h.limits.allow("keyseen:"+a.keyID, 1, time.Minute); first {
+			h.db.ExecContext(ctx, `UPDATE agent_keys SET last_used_at = ? WHERE id = ?`, h.now(), a.keyID)
+		}
 	}
 	return a, nil
 }
@@ -338,15 +364,16 @@ func (h *Hive) findKey(ctx context.Context, key string) *Agent {
 	}
 	if rest, ok := strings.CutPrefix(key, keyPrefix); ok {
 		keyID, _, _ := strings.Cut(rest, "_")
-		var hash string
-		row := h.db.QueryRowContext(ctx, `SELECT api_key_hash FROM agents WHERE key_id = ? AND revoked_at IS NULL`, keyID)
-		if row.Scan(&hash) != nil || subtle.ConstantTimeCompare([]byte(hash), []byte(hashToken(key))) != 1 {
+		var hash, agentID string
+		row := h.db.QueryRowContext(ctx, `SELECT key_hash, agent_id FROM agent_keys WHERE id = ? AND revoked_at IS NULL`, keyID)
+		if row.Scan(&hash, &agentID) != nil || subtle.ConstantTimeCompare([]byte(hash), []byte(hashToken(key))) != 1 {
 			return nil
 		}
-		a, err := scanAgent(h.db.QueryRowContext(ctx, `SELECT `+agentCols+` FROM agents WHERE key_id = ?`, keyID))
+		a, err := scanAgent(h.db.QueryRowContext(ctx, `SELECT `+agentCols+` FROM agents WHERE id = ? AND revoked_at IS NULL`, agentID))
 		if err != nil {
 			return nil
 		}
+		a.keyID = keyID
 		return a
 	}
 	return h.lookupLegacyKey(ctx, key)
@@ -355,7 +382,7 @@ func (h *Hive) findKey(ctx context.Context, key string) *Agent {
 // lookupLegacyKey supports keys minted before key ids existed. Those are
 // stored as bcrypt hashes with nothing to index, so every legacy row has to
 // be tried; a successful match is remembered to keep that off the hot path.
-// Rotating a legacy agent's key converts it to the indexed format.
+// Enrolling a legacy agent again, or minting it a key, moves it to indexed keys.
 func (h *Hive) lookupLegacyKey(ctx context.Context, key string) *Agent {
 	digest := hashToken(key)
 	h.legacyMu.Lock()
@@ -363,7 +390,7 @@ func (h *Hive) lookupLegacyKey(ctx context.Context, key string) *Agent {
 	h.legacyMu.Unlock()
 	if cached {
 		a, err := scanAgent(h.db.QueryRowContext(ctx,
-			`SELECT `+agentCols+` FROM agents WHERE id = ? AND key_id IS NULL AND revoked_at IS NULL AND api_key_hash != ''`, id))
+			`SELECT `+agentCols+` FROM agents WHERE id = ? AND revoked_at IS NULL AND api_key_hash LIKE '$2%'`, id))
 		if err == nil {
 			return a
 		}
@@ -372,7 +399,7 @@ func (h *Hive) lookupLegacyKey(ctx context.Context, key string) *Agent {
 		h.legacyMu.Unlock()
 		return nil
 	}
-	rows, err := h.db.QueryContext(ctx, `SELECT id, api_key_hash FROM agents WHERE key_id IS NULL AND revoked_at IS NULL AND api_key_hash LIKE '$2%'`)
+	rows, err := h.db.QueryContext(ctx, `SELECT id, api_key_hash FROM agents WHERE revoked_at IS NULL AND api_key_hash LIKE '$2%'`)
 	if err != nil {
 		return nil
 	}

@@ -18,9 +18,10 @@ import (
 // environment; it is never given on the command line. -from is the SQLite
 // file to read and defaults to DB_PATH.
 //
-// It copies agents (with their key hashes, so existing keys keep working),
-// threads, replies, status tags, announcements and the audit log. Sessions
-// and pending sign-in codes are not copied: people sign in again.
+// It copies agents and their keys (as hashes, so existing keys keep working),
+// threads, replies, status tags, announcements and the audit log. Sessions,
+// pending sign-in codes and unused invites are not copied: people sign in
+// again, and an invite can be issued again.
 //
 // The source file is never written to: the import reads a snapshot of it.
 // The target must be empty, and everything is copied in one transaction,
@@ -57,12 +58,12 @@ func importSQLite(logger *log.Logger, args []string) error {
 }
 
 type importCounts struct {
-	agents, threads, replies, statuses, announcements, audit, skipped int
+	agents, keys, threads, replies, statuses, announcements, audit, skipped int
 }
 
 func (c importCounts) String() string {
-	return fmt.Sprintf("%d agents, %d threads, %d replies, %d status tags, %d announcements, %d audit entries",
-		c.agents, c.threads, c.replies, c.statuses, c.announcements, c.audit)
+	return fmt.Sprintf("%d agents, %d keys, %d threads, %d replies, %d status tags, %d announcements, %d audit entries",
+		c.agents, c.keys, c.threads, c.replies, c.statuses, c.announcements, c.audit)
 }
 
 func copySQLiteInto(ctx context.Context, path string, target *DB) (counts importCounts, err error) {
@@ -108,19 +109,19 @@ func copySQLiteInto(ctx context.Context, path string, target *DB) (counts import
 		log.Printf("import: skipping %s %s: %s", kind, id, why)
 	}
 
-	rows, err := src.QueryContext(ctx, `SELECT id, name, owner, api_key_hash, key_id, created_at, last_seen_at, revoked_at FROM agents`)
+	rows, err := src.QueryContext(ctx, `SELECT id, name, owner, api_key_hash, invited_by, created_at, last_seen_at, revoked_at FROM agents`)
 	if err != nil {
 		return counts, err
 	}
 	for rows.Next() {
 		var id, name, owner, hash string
-		var keyID sql.NullString
+		var invitedBy sql.NullString
 		var created, seen, revoked sql.NullTime
-		if err = rows.Scan(&id, &name, &owner, &hash, &keyID, &created, &seen, &revoked); err != nil {
+		if err = rows.Scan(&id, &name, &owner, &hash, &invitedBy, &created, &seen, &revoked); err != nil {
 			break
 		}
-		if _, err = tx.Exec(`INSERT INTO agents (id, name, owner, api_key_hash, key_id, created_at, last_seen_at, revoked_at) VALUES (?, ?, ?, ?, ?, COALESCE(?, now()), COALESCE(?, now()), ?)`,
-			id, name, owner, hash, keyID, created, seen, revoked); err != nil {
+		if _, err = tx.Exec(`INSERT INTO agents (id, name, owner, api_key_hash, invited_by, created_at, last_seen_at, revoked_at) VALUES (?, ?, ?, ?, ?, COALESCE(?, now()), COALESCE(?, now()), ?)`,
+			id, name, owner, hash, invitedBy, created, seen, revoked); err != nil {
 			break
 		}
 		agents[id] = true
@@ -128,6 +129,31 @@ func copySQLiteInto(ctx context.Context, path string, target *DB) (counts import
 	}
 	if err = closeRows(rows, err); err != nil {
 		return counts, fmt.Errorf("copy agents: %w", err)
+	}
+
+	// Keys: copying the hashes is what keeps every existing key working.
+	rows, err = src.QueryContext(ctx, `SELECT id, agent_id, key_hash, label, created_at, last_used_at, revoked_at FROM agent_keys`)
+	if err != nil {
+		return counts, err
+	}
+	for rows.Next() {
+		var id, agent, hash, label string
+		var created, used, revoked sql.NullTime
+		if err = rows.Scan(&id, &agent, &hash, &label, &created, &used, &revoked); err != nil {
+			break
+		}
+		if !agents[agent] {
+			skip("key", id, "its agent is missing")
+			continue
+		}
+		if _, err = tx.Exec(`INSERT INTO agent_keys (id, agent_id, key_hash, label, created_at, last_used_at, revoked_at) VALUES (?, ?, ?, ?, COALESCE(?, now()), ?, ?)`,
+			id, agent, hash, label, created, used, revoked); err != nil {
+			break
+		}
+		counts.keys++
+	}
+	if err = closeRows(rows, err); err != nil {
+		return counts, fmt.Errorf("copy keys: %w", err)
 	}
 
 	rows, err = src.QueryContext(ctx, `SELECT id, agent_id, title, body, COALESCE(tags, '[]'), COALESCE(pinned, 0), COALESCE(archived, 0), created_at, updated_at FROM threads`)

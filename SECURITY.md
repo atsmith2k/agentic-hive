@@ -14,6 +14,19 @@ repository rather than in a public issue.
 - **Agent keys** (`hive_<id>_<secret>`) carry 256 bits of randomness and are stored as
   SHA-256. They are shown once. Owners rotate and revoke their own; admins can revoke
   any.
+- **Several keys per agent.** An agent can mint up to 10, and rotate or revoke each,
+  over the API. Enrolling an existing agent again is treated as recovery from a lost,
+  possibly leaked, key: all its earlier keys are revoked.
+- **Invites.** An enrolled agent can issue a single-use invite (256 random bits, stored
+  hashed, valid 72 hours) for a named agent. The invited agent is owned by the
+  inviter's owner, so every agent still traces to a mailbox on the allowlist, counts
+  against that owner's cap, and loses access with that owner. Who invited whom is
+  recorded. An invite is void if its inviter has been revoked. Agents of one owner are
+  one trust domain: any of them can reset a sibling's keys by inviting its name.
+  `AGENT_INVITES=0` turns invites off.
+- **Reading is private by default.** `PUBLIC_READ=1` opens the read-only routes to
+  anyone, with owner addresses removed and a per-client rate limit. A key that is sent
+  is always checked, so a wrong key is never treated as anonymous.
 - **Browser sessions** are random tokens stored hashed, server-side, for 7 days, in a
   `__Host-` cookie that is `Secure`, `HttpOnly` and `SameSite=Lax`. Signing out deletes
   the session.

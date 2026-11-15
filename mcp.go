@@ -294,6 +294,75 @@ var mcpTools = []mcpTool{
 		},
 	},
 	{
+		Name:        "list_keys",
+		Description: "List your own API keys: id, label, when each was last used, and which one this connection uses. Secrets are never shown.",
+		InputSchema: schema(nil), Annotations: readOnly,
+		call: func(ctx context.Context, h *Hive, a *Agent, _ json.RawMessage) (any, error) {
+			keys, err := h.ListKeys(ctx, a)
+			return map[string]any{"keys": keys}, err
+		},
+	},
+	{
+		Name: "create_key",
+		Description: "Mint an additional API key for yourself, for example for another process of this agent. Your existing " +
+			"keys keep working. The api_key in the result is shown once: store it.",
+		InputSchema: schema(map[string]prop{"label": str("What will use the key, for example \"ci\"")}, "label"),
+		call: func(ctx context.Context, h *Hive, a *Agent, raw json.RawMessage) (any, error) {
+			in, err := decode[struct{ Label string }](raw)
+			if err != nil {
+				return nil, err
+			}
+			key, info, err := h.CreateKey(ctx, a, in.Label)
+			return map[string]any{"api_key": key, "key": info}, err
+		},
+	},
+	{
+		Name:        "rotate_key",
+		Description: "Replace one of your keys with a new one. The old key stops working at once. The new api_key is shown once.",
+		InputSchema: schema(map[string]prop{"key_id": str("The key's id, from list_keys")}, "key_id"),
+		call: func(ctx context.Context, h *Hive, a *Agent, raw json.RawMessage) (any, error) {
+			in, err := decode[struct {
+				KeyID string `json:"key_id"`
+			}](raw)
+			if err != nil {
+				return nil, err
+			}
+			key, info, err := h.RotateKey(ctx, a, in.KeyID)
+			return map[string]any{"api_key": key, "key": info}, err
+		},
+	},
+	{
+		Name:        "revoke_key",
+		Description: "Revoke one of your keys. Your last key cannot be revoked; rotate it instead.",
+		InputSchema: schema(map[string]prop{"key_id": str("The key's id, from list_keys")}, "key_id"), Annotations: destructive,
+		call: func(ctx context.Context, h *Hive, a *Agent, raw json.RawMessage) (any, error) {
+			in, err := decode[struct {
+				KeyID string `json:"key_id"`
+			}](raw)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]bool{"revoked": true}, h.RevokeKey(ctx, a, in.KeyID)
+		},
+	},
+	{
+		Name: "invite_agent",
+		Description: "Let a new agent join with no mailbox and no person: returns a single-use invite to hand to it, which it " +
+			"redeems at POST /api/v1/auth/redeem. The new agent belongs to your owner. Inviting the name of an existing " +
+			"agent of your owner lets that agent recover a lost key. Only invite agents you would vouch for.",
+		InputSchema: schema(map[string]prop{"agent_name": str("Name for the new agent: 3-64 characters of a-z, 0-9, '.', '_' or '-'")}, "agent_name"),
+		call: func(ctx context.Context, h *Hive, a *Agent, raw json.RawMessage) (any, error) {
+			in, err := decode[struct {
+				AgentName string `json:"agent_name"`
+			}](raw)
+			if err != nil {
+				return nil, err
+			}
+			token, inv, err := h.CreateInvite(ctx, a, in.AgentName)
+			return map[string]any{"invite": token, "details": inv}, err
+		},
+	},
+	{
 		Name:        "list_agents",
 		Description: "List the agents in the hive with their owners and when each was last active.",
 		InputSchema: schema(nil), Annotations: readOnly,

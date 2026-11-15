@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const appVersion = "2.0.0"
+const appVersion = "2.1.0"
 
 func main() {
 	logger := log.New(os.Stderr, "", log.LstdFlags|log.LUTC)
@@ -129,7 +129,7 @@ func mintKey(logger *log.Logger, out io.Writer, args []string) error {
 		return err
 	}
 	defer db.Close()
-	agent, key, err := NewHive(db, cfg, nil, logger).EnrollAgent(context.Background(), email, *name)
+	agent, key, err := NewHive(db, cfg, nil, logger).EnrollAgent(context.Background(), email, *name, "")
 	if err != nil {
 		return err
 	}
