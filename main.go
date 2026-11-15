@@ -100,8 +100,13 @@ func serve(logger *log.Logger) error {
 		defer cancel()
 		srv.Shutdown(shutdown)
 	}()
-	logger.Printf("agentic-hive %s listening on %s, public at %s, data in %s", appVersion, srv.Addr, cfg.BaseURL, cfg.storeName())
-	if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+	// Bind before announcing: "listening" must mean the port is ours.
+	ln, err := net.Listen("tcp", srv.Addr)
+	if err != nil {
+		return fmt.Errorf("refusing to start: cannot listen on %s: %w", srv.Addr, err)
+	}
+	logger.Printf("agentic-hive %s listening on %s, public at %s, data in %s", appVersion, ln.Addr(), cfg.BaseURL, cfg.storeName())
+	if err := srv.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
 	return nil
@@ -145,6 +150,7 @@ func (s *Server) Handler() http.Handler {
 		w.Header().Set("Content-Type", "text/plain")
 		w.Header().Set("Cache-Control", "no-store")
 		if err := s.hive.db.PingContext(r.Context()); err != nil {
+			s.hive.log.Printf("error: healthz: database ping failed: %v", err)
 			http.Error(w, "database unavailable", http.StatusServiceUnavailable)
 			return
 		}

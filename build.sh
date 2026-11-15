@@ -46,21 +46,48 @@ go test -count=1 ./...
 mkdir -p bin
 go build -trimpath -ldflags='-s -w' -o bin/hive.new .
 
-# Smoke check: the binary must start and answer on a spare port.
+# Smoke check: the new binary must start and answer. It runs on a throwaway
+# SQLite file even if the build environment carries DATABASE_URL: a build
+# must never touch the real database. PORT=0 lets the kernel pick a free
+# port, so the check cannot collide with, or be answered by, anything else
+# on the machine; the address is read from the binary's own start line,
+# which it prints only once it holds the port.
 tmp="$(mktemp -d)"
-port=$((20000 + $$ % 20000))
-# It runs on a throwaway SQLite file even if the build environment carries
-# DATABASE_URL: a build must never touch the real database.
-env -u DATABASE_URL DEV_MODE=1 HOST=127.0.0.1 PORT=$port DB_PATH="$tmp/smoke.db" bin/hive.new >"$tmp/log" 2>&1 &
+env -u DATABASE_URL DEV_MODE=1 HOST=127.0.0.1 PORT=0 DB_PATH="$tmp/smoke.db" bin/hive.new >"$tmp/log" 2>&1 &
 pid=$!
 trap 'kill $pid 2>/dev/null || true; rm -rf "$tmp"' EXIT
-ok=
-for _ in 1 2 3 4 5 6 7 8 9 10; do
-    if [ "$(curl -fs "http://127.0.0.1:$port/healthz" 2>/dev/null)" = ok ]; then ok=1; break; fi
-    sleep 0.5
+
+smoke_fail() {
+    echo "build.sh: smoke check failed at step: $1" >&2
+    [ -n "${2:-}" ] && echo "  $2" >&2
+    if kill -0 $pid 2>/dev/null; then echo "  server process: still running" >&2; else echo "  server process: exited" >&2; fi
+    echo "  server log:" >&2
+    sed 's/^/    /' "$tmp/log" >&2
+    rm -f bin/hive.new
+    exit 1
+}
+
+# fetch PATH: sets $status and $body. --noproxy keeps a proxy configured in
+# the build environment from intercepting a request to loopback.
+fetch() {
+    status="$(curl -s --noproxy '*' --max-time 5 -o "$tmp/body" -w '%{http_code}' "http://$addr$1" 2>"$tmp/curl.err")" || true
+    body="$(head -c 400 "$tmp/body" 2>/dev/null || true)"
+}
+
+addr=
+for _ in $(seq 1 50); do
+    addr="$(sed -n 's/.* listening on \([^,]*\),.*/\1/p' "$tmp/log" | head -n 1)"
+    [ -n "$addr" ] && break
+    kill -0 $pid 2>/dev/null || smoke_fail "start" "the server exited before it was listening"
+    sleep 0.2
 done
-if [ -z "$ok" ] || ! curl -fs "http://127.0.0.1:$port/llms.txt" | grep -q 'Agentic Hive'; then
-    echo "build.sh: smoke check failed" >&2; cat "$tmp/log" >&2; rm -f bin/hive.new; exit 1
-fi
+[ -n "$addr" ] || smoke_fail "start" "no 'listening on' line within 10s"
+
+fetch /healthz
+[ "$status" = 200 ] && [ "$body" = ok ] ||
+    smoke_fail "GET http://$addr/healthz" "wanted 200 with body 'ok'; got status ${status:-none}, body '$body' $(cat "$tmp/curl.err")"
+fetch /llms.txt
+[ "$status" = 200 ] && grep -q 'Agentic Hive' "$tmp/body" ||
+    smoke_fail "GET http://$addr/llms.txt" "wanted 200 containing 'Agentic Hive'; got status ${status:-none}, body starting '$body' $(cat "$tmp/curl.err")"
 mv bin/hive.new bin/hive
 echo "build.sh: built bin/hive ($(bin/hive version))"
