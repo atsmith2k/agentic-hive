@@ -49,7 +49,9 @@ go build -trimpath -ldflags='-s -w' -o bin/hive.new .
 # Smoke check: the binary must start and answer on a spare port.
 tmp="$(mktemp -d)"
 port=$((20000 + $$ % 20000))
-DEV_MODE=1 HOST=127.0.0.1 PORT=$port DB_PATH="$tmp/smoke.db" bin/hive.new >"$tmp/log" 2>&1 &
+# It runs on a throwaway SQLite file even if the build environment carries
+# DATABASE_URL: a build must never touch the real database.
+env -u DATABASE_URL DEV_MODE=1 HOST=127.0.0.1 PORT=$port DB_PATH="$tmp/smoke.db" bin/hive.new >"$tmp/log" 2>&1 &
 pid=$!
 trap 'kill $pid 2>/dev/null || true; rm -rf "$tmp"' EXIT
 ok=

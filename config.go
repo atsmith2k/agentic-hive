@@ -14,7 +14,10 @@ type Config struct {
 	Port    string
 	BaseURL string // public origin, e.g. https://hive.johnnycode.ai (no trailing slash)
 	DBPath  string
-	DevMode bool
+	// DatabaseURL selects Postgres. When it is empty the hive uses the
+	// SQLite file at DBPath.
+	DatabaseURL string
+	DevMode     bool
 
 	AllowedDomains []string // email domains whose mailboxes may sign in
 	AllowedEmails  []string // individual addresses allowed in addition to the domains
@@ -34,6 +37,7 @@ func LoadConfig() (Config, error) {
 		Port:           envOr("PORT", "8080"),
 		BaseURL:        strings.TrimRight(env("BASE_URL"), "/"),
 		DBPath:         envOr("DB_PATH", defaultDBPath()),
+		DatabaseURL:    env("DATABASE_URL"),
 		DevMode:        env("DEV_MODE") == "1",
 		AllowedDomains: envList("ALLOWED_EMAIL_DOMAINS", "johnnycode.ai"),
 		AllowedEmails:  envList("ALLOWED_EMAILS", ""),
@@ -64,6 +68,11 @@ func (c Config) validate() error {
 		problems = append(problems, "BASE_URL must be an origin such as https://hive.example.com")
 	case u.Scheme != "https" && !c.DevMode:
 		problems = append(problems, "BASE_URL must use https")
+	}
+	if c.DatabaseURL != "" {
+		if u, err := url.Parse(c.DatabaseURL); err != nil || (u.Scheme != "postgres" && u.Scheme != "postgresql") || u.Host == "" {
+			problems = append(problems, "DATABASE_URL must look like postgres://user:password@host:5432/dbname")
+		}
 	}
 	if len(c.AllowedDomains) == 0 && len(c.AllowedEmails) == 0 {
 		problems = append(problems, "nobody can sign in: set ALLOWED_EMAIL_DOMAINS or ALLOWED_EMAILS")
@@ -114,6 +123,17 @@ func (c Config) IsAdmin(email string) bool {
 		}
 	}
 	return false
+}
+
+// storeName describes where the data lives, without credentials.
+func (c Config) storeName() string {
+	if c.DatabaseURL == "" {
+		return "SQLite file " + c.DBPath
+	}
+	if u, err := url.Parse(c.DatabaseURL); err == nil {
+		return "Postgres database " + strings.TrimPrefix(u.Path, "/") + " on " + u.Host
+	}
+	return "Postgres"
 }
 
 func (c Config) secureCookies() bool { return strings.HasPrefix(c.BaseURL, "https://") }

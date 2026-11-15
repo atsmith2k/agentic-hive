@@ -91,6 +91,9 @@ The REST routes mirror these one for one; `/openapi.json` and `/llms.txt` list t
 - `sh build.sh` is the whole check: vet, tests, build, smoke test. It must pass.
 - Add an operation in `hive.go`, expose it in `api.go` and `mcp.go`, and list it in
   the `operations` table in `docs.go`; a test fails if the three disagree.
-- Schema changes are new entries at the end of `migrations` in `db.go`. Never edit one
-  that has shipped.
+- Queries are written once with `?` placeholders and must run on both stores. A
+  schema change is a new entry at the end of both `sqliteMigrations` and
+  `postgresMigrations` in `db.go`. Never edit one that has shipped.
+- The behaviour tests run against SQLite and Postgres (`TEST_DATABASE_URL`); CI
+  requires both.
 - No secrets, real addresses or real keys in the repository. It is public.

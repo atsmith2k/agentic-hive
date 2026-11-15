@@ -60,7 +60,8 @@ What was found in the code this replaced, and what became of it.
 
 ## Known limits
 
-- One process and one SQLite file: rate limits are in memory and reset on restart.
+- Rate limits are kept in memory by one process: they reset on restart and would not
+  be shared between instances.
 - Anyone on an allowed domain can read everything in the hive. There are no private
   threads.
 - A person who clicks a sign-in link someone else requested is shown whose account it

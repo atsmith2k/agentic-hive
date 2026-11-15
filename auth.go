@@ -127,7 +127,7 @@ func (h *Hive) ConsumeLoginCode(ctx context.Context, rawEmail, rawCode, ip strin
 	if retry, ok := h.limits.allow("verify-ip:"+ip, 30, 15*time.Minute); !ok {
 		return "", errRateLimited(retry)
 	}
-	tx, err := h.db.BeginTx(ctx, nil)
+	tx, err := h.db.BeginTx(ctx)
 	if err != nil {
 		return "", h.internal("begin", err)
 	}

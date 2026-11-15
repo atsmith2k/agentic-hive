@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -29,11 +30,13 @@ func main() {
 	case "serve":
 		err = serve(logger)
 	case "mint-key":
-		err = mintKey(logger, os.Args[2:])
+		err = mintKey(logger, os.Stdout, os.Args[2:])
+	case "import-sqlite":
+		err = importSQLite(logger, os.Args[2:])
 	case "version":
 		fmt.Println(appVersion)
 	default:
-		err = fmt.Errorf("unknown command %q: use serve, mint-key or version", cmd)
+		err = fmt.Errorf("unknown command %q: use serve, mint-key, import-sqlite or version", cmd)
 	}
 	if err != nil {
 		logger.Fatal(err)
@@ -45,11 +48,20 @@ func serve(logger *log.Logger) error {
 	if err != nil {
 		return err
 	}
-	db, err := OpenDB(cfg.DBPath)
+	db, err := OpenDB(cfg)
 	if err != nil {
-		return err
+		return fmt.Errorf("refusing to start: %w", err)
 	}
 	defer db.Close()
+
+	if cfg.DatabaseURL != "" {
+		// Moving to Postgres must not look like losing everything.
+		var agents int
+		db.QueryRow(`SELECT COUNT(*) FROM agents`).Scan(&agents)
+		if _, statErr := os.Stat(cfg.DBPath); statErr == nil && agents == 0 {
+			logger.Printf("warning: Postgres is empty and a SQLite database exists at %s. If it holds your hive, stop and run `hive import-sqlite` before anyone signs in (see docs/DEPLOY.md)", cfg.DBPath)
+		}
+	}
 
 	var mailer Mailer = NewRemailMailer(cfg)
 	if cfg.RemailAPIKey == "" { // only reachable in DEV_MODE
@@ -88,7 +100,7 @@ func serve(logger *log.Logger) error {
 		defer cancel()
 		srv.Shutdown(shutdown)
 	}()
-	logger.Printf("agentic-hive %s listening on %s, public at %s, data in %s", appVersion, srv.Addr, cfg.BaseURL, cfg.DBPath)
+	logger.Printf("agentic-hive %s listening on %s, public at %s, data in %s", appVersion, srv.Addr, cfg.BaseURL, cfg.storeName())
 	if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
@@ -97,7 +109,7 @@ func serve(logger *log.Logger) error {
 
 // mintKey creates an agent and prints its key, for operators with shell
 // access: bootstrapping before mail works, or provisioning from a script.
-func mintKey(logger *log.Logger, args []string) error {
+func mintKey(logger *log.Logger, out io.Writer, args []string) error {
 	fs := flag.NewFlagSet("mint-key", flag.ExitOnError)
 	owner := fs.String("owner", "", "email address that owns the agent")
 	name := fs.String("name", "", "agent name")
@@ -107,7 +119,7 @@ func mintKey(logger *log.Logger, args []string) error {
 	if email == "" || !cfg.EmailAllowed(email) {
 		return fmt.Errorf("-owner must be an address allowed by ALLOWED_EMAIL_DOMAINS or ALLOWED_EMAILS")
 	}
-	db, err := OpenDB(cfg.DBPath)
+	db, err := OpenDB(cfg)
 	if err != nil {
 		return err
 	}
@@ -117,7 +129,7 @@ func mintKey(logger *log.Logger, args []string) error {
 		return err
 	}
 	logger.Printf("agent %s (%s) owned by %s; only a hash of the key below is stored, so it cannot be shown again", agent.Name, agent.ID, email)
-	fmt.Println(key)
+	fmt.Fprintln(out, key)
 	return nil
 }
 

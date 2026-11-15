@@ -11,6 +11,7 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -58,19 +59,81 @@ type testEnv struct {
 	srv  *httptest.Server
 }
 
-func newEnv(t *testing.T) *testEnv {
+// openTestStore opens an empty store of the named kind. Postgres tests need
+// TEST_DATABASE_URL (CI provides one) and each gets its own schema.
+func openTestStore(t *testing.T, store string) *DB {
 	t.Helper()
-	cfg := Config{BaseURL: "https://hive.test", AllowedDomains: []string{"johnnycode.ai"},
-		AdminEmails: []string{"owner@johnnycode.ai"}, FrameAncestors: "'none'"}
-	db, err := OpenDB(filepath.Join(t.TempDir(), "hive.db"))
+	if store == "sqlite" {
+		db, err := OpenDB(Config{DBPath: filepath.Join(t.TempDir(), "hive.db")})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { db.Close() })
+		return db
+	}
+	base := os.Getenv("TEST_DATABASE_URL")
+	if base == "" {
+		if os.Getenv("REQUIRE_POSTGRES_TESTS") == "1" { // CI: a skip there would hide a gap
+			t.Fatal("REQUIRE_POSTGRES_TESTS=1 but TEST_DATABASE_URL is not set")
+		}
+		t.Skip("TEST_DATABASE_URL is not set; skipping Postgres")
+	}
+	admin, err := sql.Open("pgx", base)
 	if err != nil {
 		t.Fatal(err)
 	}
+	schema := "t_" + randomHex(8)
+	if _, err := admin.Exec("CREATE SCHEMA " + schema); err != nil {
+		t.Fatalf("TEST_DATABASE_URL is set but unusable: %v", err)
+	}
+	u, _ := url.Parse(base)
+	q := u.Query()
+	q.Set("search_path", schema)
+	u.RawQuery = q.Encode()
+	db, err := OpenDB(Config{DatabaseURL: u.String()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		db.Close()
+		admin.Exec("DROP SCHEMA " + schema + " CASCADE")
+		admin.Close()
+	})
+	t.Setenv("TEST_STORE_URL", u.String())
+	return db
+}
+
+func newEnv(t *testing.T, store string) *testEnv {
+	t.Helper()
+	cfg := Config{BaseURL: "https://hive.test", AllowedDomains: []string{"johnnycode.ai"},
+		AdminEmails: []string{"owner@johnnycode.ai"}, FrameAncestors: "'none'"}
+	db := openTestStore(t, store)
 	mail := &fakeMailer{sent: map[string]string{}}
 	hive := NewHive(db, cfg, mail, log.New(io.Discard, "", 0))
 	srv := httptest.NewServer(NewServer(cfg, hive).Handler())
-	t.Cleanup(func() { srv.Close(); db.Close() })
+	t.Cleanup(srv.Close)
 	return &testEnv{t: t, hive: hive, mail: mail, srv: srv}
+}
+
+// TestHive runs every behaviour test against both stores, so SQLite and
+// Postgres cannot drift apart.
+func TestHive(t *testing.T) {
+	tests := map[string]func(*testing.T, *testEnv){
+		"AgentEnrollsByEmailAndUsesTheAPI":           testAgentEnrollsByEmailAndUsesTheAPI,
+		"EnrollmentIsRestrictedAndCodesAreSingleUse": testEnrollmentIsRestrictedAndCodesAreSingleUse,
+		"KeysRotateRevokeAndNamesAreOwned":           testKeysRotateRevokeAndNamesAreOwned,
+		"APIRejectsBadInput":                         testAPIRejectsBadInput,
+		"MCP":                                        testMCP,
+		"WebSignInAndAccessControl":                  testWebSignInAndAccessControl,
+		"SecurityHeadersAndDiscovery":                testSecurityHeadersAndDiscovery,
+		"DocumentedOperationsMatchTheRouter":         testDocumentedOperationsMatchTheRouter,
+		"MailFailureIsReported":                      testMailFailureIsReported,
+	}
+	for name, fn := range tests {
+		for _, store := range []string{"sqlite", "postgres"} {
+			t.Run(name+"/"+store, func(t *testing.T) { fn(t, newEnv(t, store)) })
+		}
+	}
 }
 
 // call makes a JSON request and decodes the response into out (if not nil).
@@ -115,8 +178,7 @@ func (e *testEnv) enroll(email, name string) string {
 	return out.APIKey
 }
 
-func TestAgentEnrollsByEmailAndUsesTheAPI(t *testing.T) {
-	e := newEnv(t)
+func testAgentEnrollsByEmailAndUsesTheAPI(t *testing.T, e *testEnv) {
 	key := e.enroll("scout@johnnycode.ai", "scout")
 	if !strings.HasPrefix(key, "hive_") {
 		t.Fatalf("key %q lacks the hive_ prefix", key)
@@ -206,8 +268,7 @@ func TestAgentEnrollsByEmailAndUsesTheAPI(t *testing.T) {
 	}
 }
 
-func TestEnrollmentIsRestrictedAndCodesAreSingleUse(t *testing.T) {
-	e := newEnv(t)
+func testEnrollmentIsRestrictedAndCodesAreSingleUse(t *testing.T, e *testEnv) {
 
 	// An outsider gets the same answer but no mail and no key.
 	if s := e.call("POST", "/api/v1/auth/request", "", map[string]string{"email": "eve@example.com"}, nil); s != 202 {
@@ -257,8 +318,7 @@ func TestEnrollmentIsRestrictedAndCodesAreSingleUse(t *testing.T) {
 	}
 }
 
-func TestKeysRotateRevokeAndNamesAreOwned(t *testing.T) {
-	e := newEnv(t)
+func testKeysRotateRevokeAndNamesAreOwned(t *testing.T, e *testEnv) {
 	first := e.enroll("owner@johnnycode.ai", "builder")
 	second := e.enroll("owner@johnnycode.ai", "builder") // same owner, same name: rotation
 	if s := e.call("GET", "/api/v1/me", first, nil, nil); s != 401 {
@@ -297,8 +357,7 @@ func TestKeysRotateRevokeAndNamesAreOwned(t *testing.T) {
 	}
 }
 
-func TestAPIRejectsBadInput(t *testing.T) {
-	e := newEnv(t)
+func testAPIRejectsBadInput(t *testing.T, e *testEnv) {
 	key := e.enroll("scout@johnnycode.ai", "scout")
 	for _, tc := range []struct {
 		name string
@@ -335,8 +394,7 @@ func TestAPIRejectsBadInput(t *testing.T) {
 	}
 }
 
-func TestMCP(t *testing.T) {
-	e := newEnv(t)
+func testMCP(t *testing.T, e *testEnv) {
 	key := e.enroll("scout@johnnycode.ai", "scout")
 	rpc := func(key, method string, params any) (int, map[string]any) {
 		var out map[string]any
@@ -408,8 +466,7 @@ func TestMCP(t *testing.T) {
 	}
 }
 
-func TestWebSignInAndAccessControl(t *testing.T) {
-	e := newEnv(t)
+func testWebSignInAndAccessControl(t *testing.T, e *testEnv) {
 	// The test server is plain HTTP, so use the non-Secure cookie.
 	cfg := e.hive.cfg
 	cfg.BaseURL = e.srv.URL
@@ -523,8 +580,7 @@ func TestWebSignInAndAccessControl(t *testing.T) {
 	}
 }
 
-func TestSecurityHeadersAndDiscovery(t *testing.T) {
-	e := newEnv(t)
+func testSecurityHeadersAndDiscovery(t *testing.T, e *testEnv) {
 	resp, err := http.Get(e.srv.URL + "/login")
 	if err != nil {
 		t.Fatal(err)
@@ -555,8 +611,7 @@ func TestSecurityHeadersAndDiscovery(t *testing.T) {
 
 // Every documented operation must be a real route, and every /api/v1 route
 // must be documented.
-func TestDocumentedOperationsMatchTheRouter(t *testing.T) {
-	e := newEnv(t)
+func testDocumentedOperationsMatchTheRouter(t *testing.T, e *testEnv) {
 	srv := NewServer(e.hive.cfg, e.hive)
 	mux := http.NewServeMux()
 	srv.apiRoutes(mux)
@@ -579,7 +634,7 @@ func TestAdoptsAnUnversionedDatabaseAndItsKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 	hash, _ := bcrypt.GenerateFromPassword([]byte("af_legacy-key-from-the-old-release"), bcrypt.MinCost)
-	if _, err := old.Exec(migrations[0] + `
+	if _, err := old.Exec(sqliteMigrations[0] + `
 		CREATE TABLE users (id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, created_at DATETIME);
 		INSERT INTO agents (id, name, owner, api_key_hash) VALUES ('a1', 'veteran', 'someone', '` + string(hash) + `');
 		INSERT INTO threads (id, agent_id, title, body) VALUES ('t1', 'a1', 'Old thread', 'still here');`); err != nil {
@@ -587,7 +642,7 @@ func TestAdoptsAnUnversionedDatabaseAndItsKeys(t *testing.T) {
 	}
 	old.Close()
 
-	db, err := OpenDB(path)
+	db, err := OpenDB(Config{DBPath: path})
 	if err != nil {
 		t.Fatalf("opening a pre-versioning database: %v", err)
 	}
@@ -673,11 +728,121 @@ func TestRemailMailerSpeaksTheRemailAPI(t *testing.T) {
 	}
 }
 
-func TestMailFailureIsReported(t *testing.T) {
-	e := newEnv(t)
+func testMailFailureIsReported(t *testing.T, e *testEnv) {
 	e.mail.fail = true
 	var body Error
 	if s := e.call("POST", "/api/v1/auth/request", "", map[string]string{"email": "a@johnnycode.ai"}, &body); s != 502 || body.Code != "mail_failed" {
 		t.Fatalf("status %d, body %+v", s, body)
+	}
+}
+
+// legacySQLite writes a database as the pre-versioning release left it: one
+// agent with a bcrypt key, a thread, a reply, a status tag, and one reply
+// whose thread is gone (that release did not enforce foreign keys).
+func legacySQLite(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "forum.db")
+	old, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer old.Close()
+	hash, _ := bcrypt.GenerateFromPassword([]byte("af_legacy-key-from-the-old-release"), bcrypt.MinCost)
+	if _, err := old.Exec(sqliteMigrations[0] + `
+		INSERT INTO agents (id, name, owner, api_key_hash) VALUES ('a1', 'veteran', 'someone', '` + string(hash) + `');
+		INSERT INTO threads (id, agent_id, title, body, tags, pinned) VALUES ('t1', 'a1', 'Old thread', 'still here', '["legacy"]', 1);
+		INSERT INTO replies (id, thread_id, agent_id, body) VALUES ('r1', 't1', 'a1', 'old reply');
+		INSERT INTO replies (id, thread_id, agent_id, body) VALUES ('r-orphan', 'gone', 'a1', 'thread was deleted');
+		INSERT INTO status_tags (id, thread_id, agent_id, tag) VALUES ('s1', 't1', 'a1', 'in-progress');
+		INSERT INTO announcements (id, title, body) VALUES ('n1', 'Hello', 'world');`); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestImportSQLiteIntoPostgres(t *testing.T) {
+	target := openTestStore(t, "postgres")
+	source := legacySQLite(t)
+	before, _ := os.ReadFile(source)
+	ctx := context.Background()
+
+	counts, err := copySQLiteInto(ctx, source, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if counts.agents != 1 || counts.threads != 1 || counts.replies != 1 || counts.statuses != 1 || counts.announcements != 1 || counts.skipped != 1 {
+		t.Fatalf("counts = %+v", counts)
+	}
+	if after, _ := os.ReadFile(source); !bytes.Equal(before, after) {
+		t.Fatal("the import changed the source file")
+	}
+
+	hive := NewHive(target, Config{}, nil, log.New(io.Discard, "", 0))
+	agent, err := hive.Authenticate(ctx, "af_legacy-key-from-the-old-release", "1.2.3.4")
+	if err != nil || agent.Name != "veteran" {
+		t.Fatalf("legacy key after import: %v", err)
+	}
+	thread, err := hive.GetThread(ctx, "t1")
+	if err != nil || !thread.Pinned || len(thread.Replies) != 1 || len(thread.Statuses) != 1 || thread.Tags[0] != "legacy" {
+		t.Fatalf("imported thread = %+v, %v", thread, err)
+	}
+	// The imported agent can keep working in the new store.
+	if _, err := hive.CreateReply(ctx, agent, "t1", "new reply"); err != nil {
+		t.Fatal(err)
+	}
+	// A second import must not pile onto existing data.
+	if _, err := copySQLiteInto(ctx, source, target); err == nil {
+		t.Fatal("importing into a non-empty database was allowed")
+	}
+}
+
+func TestMintKeyUsesTheConfiguredStore(t *testing.T) {
+	for _, store := range []string{"sqlite", "postgres"} {
+		t.Run(store, func(t *testing.T) {
+			db := openTestStore(t, store)
+			if store == "postgres" {
+				t.Setenv("DATABASE_URL", os.Getenv("TEST_STORE_URL"))
+			} else {
+				db.Close()
+				t.Setenv("DATABASE_URL", "")
+				t.Setenv("DB_PATH", filepath.Join(t.TempDir(), "mint.db"))
+			}
+			t.Setenv("ALLOWED_EMAIL_DOMAINS", "johnnycode.ai")
+			var out bytes.Buffer
+			if err := mintKey(log.New(io.Discard, "", 0), &out, []string{"-owner", "owner@johnnycode.ai", "-name", "minted"}); err != nil {
+				t.Fatal(err)
+			}
+			cfg, _ := LoadConfig()
+			check, err := OpenDB(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer check.Close()
+			hive := NewHive(check, cfg, nil, log.New(io.Discard, "", 0))
+			agent, err := hive.Authenticate(context.Background(), strings.TrimSpace(out.String()), "1.2.3.4")
+			if err != nil || agent.Name != "minted" || agent.Owner != "owner@johnnycode.ai" {
+				t.Fatalf("minted key: %v %+v", err, agent)
+			}
+		})
+	}
+}
+
+func TestBadDatabaseURLIsRefusedWithoutLeakingIt(t *testing.T) {
+	// Nothing listens on port 1, and the password must not reach the log.
+	sqlitePath := filepath.Join(t.TempDir(), "x.db")
+	_, err := OpenDB(Config{DatabaseURL: "postgres://hive:s3cret-pw@127.0.0.1:1/hive?connect_timeout=2", DBPath: sqlitePath})
+	if err == nil {
+		t.Fatal("an unreachable DATABASE_URL was accepted")
+	}
+	if msg := err.Error(); !strings.Contains(msg, "cannot use DATABASE_URL") || strings.Contains(msg, "s3cret-pw") {
+		t.Fatalf("error = %q", msg)
+	}
+	if _, statErr := os.Stat(sqlitePath); statErr == nil {
+		t.Fatal("fell back to SQLite")
+	}
+	bad := Config{BaseURL: "https://h.example", AllowedDomains: []string{"johnnycode.ai"}, RemailAPIKey: "k", RemailFrom: "f@johnnycode.ai",
+		DatabaseURL: "mysql://nope"}
+	if err := bad.validate(); err == nil || !strings.HasPrefix(err.Error(), "refusing to start:") || !strings.Contains(err.Error(), "DATABASE_URL") {
+		t.Fatalf("a non-Postgres DATABASE_URL: %v", err)
 	}
 }

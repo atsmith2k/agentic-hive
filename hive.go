@@ -24,7 +24,7 @@ const (
 // Hive is the application: every operation an agent or a person can
 // perform. REST, MCP and the web UI are thin layers over these methods.
 type Hive struct {
-	db     *sql.DB
+	db     *DB
 	cfg    Config
 	mail   Mailer
 	log    *log.Logger
@@ -35,7 +35,7 @@ type Hive struct {
 	legacy   map[string]string // digest of a verified legacy key -> agent id
 }
 
-func NewHive(db *sql.DB, cfg Config, mail Mailer, logger *log.Logger) *Hive {
+func NewHive(db *DB, cfg Config, mail Mailer, logger *log.Logger) *Hive {
 	now := func() time.Time { return time.Now().UTC() }
 	return &Hive{db: db, cfg: cfg, mail: mail, log: logger, now: now, limits: newLimiter(now), legacy: map[string]string{}}
 }
@@ -213,7 +213,7 @@ func (h *Hive) ListThreads(ctx context.Context, f ThreadFilter) ([]Thread, int, 
 	var args []any
 	add := func(cond string, a ...any) { conds = append(conds, cond); args = append(args, a...) }
 	if f.Tag != "" {
-		add("EXISTS (SELECT 1 FROM json_each(t.tags) WHERE json_each.value = ?)", f.Tag)
+		add(h.db.tagFilter(), f.Tag)
 	}
 	if f.Agent != "" {
 		add("(a.name = ? OR a.id = ?)", f.Agent, f.Agent)
@@ -226,7 +226,7 @@ func (h *Hive) ListThreads(ctx context.Context, f ThreadFilter) ([]Thread, int, 
 	}
 	if f.Query != "" {
 		like := "%" + strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(f.Query) + "%"
-		add(`(t.title LIKE ? ESCAPE '\' OR t.body LIKE ? ESCAPE '\')`, like, like)
+		add(`(t.title `+h.db.like()+` ? ESCAPE '\' OR t.body `+h.db.like()+` ? ESCAPE '\')`, like, like)
 	}
 	if f.Pinned != nil {
 		add("t.pinned = ?", *f.Pinned)
@@ -346,7 +346,7 @@ func (h *Hive) DeleteThread(ctx context.Context, actor *Agent, id string) error 
 // deleteThread removes a thread, its replies and their status tags.
 // Explicit rather than relying on ON DELETE CASCADE alone.
 func (h *Hive) deleteThread(ctx context.Context, id string) error {
-	tx, err := h.db.BeginTx(ctx, nil)
+	tx, err := h.db.BeginTx(ctx)
 	if err != nil {
 		return h.internal("begin", err)
 	}
@@ -533,7 +533,7 @@ func (h *Hive) AddStatus(ctx context.Context, actor *Agent, onReply bool, target
 	if onReply {
 		col = "reply_id"
 	}
-	existing, err := h.queryStatuses(ctx, `WHERE s.`+col+` = ? AND s.agent_id = ? AND s.tag = ? AND s.reference_id IS ?`,
+	existing, err := h.queryStatuses(ctx, `WHERE s.`+col+` = ? AND s.agent_id = ? AND s.tag = ? AND s.reference_id IS NOT DISTINCT FROM ?`,
 		targetID, actor.ID, in.Tag, ref)
 	if err != nil {
 		return nil, false, err
@@ -594,7 +594,7 @@ func (h *Hive) ListAgents(ctx context.Context, where string, args ...any) ([]Age
 func (h *Hive) Announcements(ctx context.Context, activeOnly bool) ([]Announcement, error) {
 	q := `SELECT id, title, body, active, created_at FROM announcements`
 	if activeOnly {
-		q += ` WHERE active = 1`
+		q += ` WHERE active`
 	}
 	rows, err := h.db.QueryContext(ctx, q+` ORDER BY created_at DESC`)
 	if err != nil {
@@ -629,7 +629,7 @@ func (h *Hive) ActiveContext(ctx context.Context) (*ActiveContext, error) {
 		return nil, err
 	}
 	byStatus := func(tag string) ([]Thread, error) {
-		return h.queryThreads(ctx, threadSelect+`WHERE t.archived = 0 AND EXISTS
+		return h.queryThreads(ctx, threadSelect+`WHERE NOT t.archived AND EXISTS
 			(SELECT 1 FROM status_tags s WHERE s.thread_id = t.id AND s.tag = ?) ORDER BY t.updated_at DESC LIMIT 50`, tag)
 	}
 	if c.InProgress, err = byStatus("in-progress"); err != nil {
