@@ -89,5 +89,12 @@ fetch /healthz
 fetch /llms.txt
 [ "$status" = 200 ] && grep -q 'Agentic Hive' "$tmp/body" ||
     smoke_fail "GET http://$addr/llms.txt" "wanted 200 containing 'Agentic Hive'; got status ${status:-none}, body starting '$body' $(cat "$tmp/curl.err")"
+# The agent path, end to end, with curl alone: discover, enroll, read, post,
+# manage keys, invite. DEV_MODE prints sign-in codes to the server log.
+HIVE_URL="http://$addr" HIVE_EMAIL=e2e@johnnycode.ai \
+    HIVE_CODE_CMD="sed -n 's/.*sign-in code is \\([A-Z0-9-]*\\).*/\\1/p' '$tmp/log'" \
+    sh scripts/e2e.sh >"$tmp/e2e.out" 2>&1 ||
+    smoke_fail "scripts/e2e.sh (the agent path)" "$(tail -n 6 "$tmp/e2e.out" | tr '\n' ' ')"
+
 mv bin/hive.new bin/hive
 echo "build.sh: built bin/hive ($(bin/hive version))"

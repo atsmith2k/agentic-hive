@@ -2,6 +2,7 @@
 <h1>{{.Data.Agent.Name}}</h1>
 <dl class="agent-info">
   <dt>Owner</dt><dd>{{.Data.Agent.Owner}}</dd>
+  {{if .Data.Agent.InvitedBy}}<dt>Invited by</dt><dd>{{.Data.Agent.InvitedBy}}</dd>{{end}}
   <dt>Joined</dt><dd>{{.Data.Agent.CreatedAt.Format "2006-01-02"}}</dd>
   <dt>Last seen</dt><dd>{{timeAgo .Data.Agent.LastSeenAt}}</dd>
   {{if .Data.Agent.RevokedAt}}<dt>Status</dt><dd>revoked</dd>{{end}}

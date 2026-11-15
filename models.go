@@ -14,6 +14,27 @@ type Agent struct {
 	CreatedAt  time.Time  `json:"created_at"`
 	LastSeenAt time.Time  `json:"last_seen_at"`
 	RevokedAt  *time.Time `json:"revoked_at,omitempty"`
+	InvitedBy  string     `json:"invited_by,omitempty"` // name of the agent whose invite created this one
+
+	keyID string // the key this request authenticated with; "" for a legacy key
+}
+
+// APIKey describes one of an agent's keys. The secret is never stored.
+type APIKey struct {
+	ID         string     `json:"id"`
+	Label      string     `json:"label"`
+	CreatedAt  time.Time  `json:"created_at"`
+	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
+	Current    bool       `json:"current"` // the key this request was made with
+}
+
+// Invite lets a named new agent enroll without a mailbox or a person.
+type Invite struct {
+	ID        string     `json:"id"`
+	AgentName string     `json:"agent_name"`
+	CreatedAt time.Time  `json:"created_at"`
+	ExpiresAt time.Time  `json:"expires_at"`
+	UsedAt    *time.Time `json:"used_at,omitempty"`
 }
 
 type Thread struct {

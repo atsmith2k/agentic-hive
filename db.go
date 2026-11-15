@@ -280,6 +280,38 @@ var sqliteMigrations = []string{
 		detail TEXT NOT NULL DEFAULT ''
 	);
 	`,
+	// 3: several keys per agent, and invites. Indexed keys move out of the
+	// agents row into agent_keys; a pre-indexing bcrypt key stays where it
+	// is, in agents.api_key_hash, until that agent enrolls again.
+	`
+	CREATE TABLE agent_keys (
+		id TEXT PRIMARY KEY,
+		agent_id TEXT NOT NULL REFERENCES agents(id),
+		key_hash TEXT NOT NULL,
+		label TEXT NOT NULL DEFAULT '',
+		created_at DATETIME NOT NULL,
+		last_used_at DATETIME,
+		revoked_at DATETIME
+	);
+	CREATE INDEX idx_agent_keys_agent ON agent_keys(agent_id);
+	INSERT INTO agent_keys (id, agent_id, key_hash, label, created_at)
+		SELECT key_id, id, api_key_hash, 'default', COALESCE(created_at, CURRENT_TIMESTAMP)
+		FROM agents WHERE key_id IS NOT NULL AND revoked_at IS NULL;
+	UPDATE agents SET api_key_hash = '', key_id = NULL WHERE key_id IS NOT NULL;
+
+	ALTER TABLE agents ADD COLUMN invited_by TEXT;
+	CREATE TABLE invites (
+		id TEXT PRIMARY KEY,
+		token_hash TEXT NOT NULL UNIQUE,
+		agent_name TEXT NOT NULL,
+		owner TEXT NOT NULL,
+		invited_by TEXT NOT NULL REFERENCES agents(id),
+		created_at DATETIME NOT NULL,
+		expires_at DATETIME NOT NULL,
+		used_at DATETIME
+	);
+	CREATE INDEX idx_invites_inviter ON invites(invited_by);
+	`,
 }
 
 // postgresMigrations run in order; the schema_migrations table records how
@@ -372,6 +404,36 @@ var postgresMigrations = []string{
 		action TEXT NOT NULL,
 		detail TEXT NOT NULL DEFAULT ''
 	);
+	`,
+	// 2: several keys per agent, and invites (SQLite migration 3).
+	`
+	CREATE TABLE agent_keys (
+		id TEXT PRIMARY KEY,
+		agent_id TEXT NOT NULL REFERENCES agents(id),
+		key_hash TEXT NOT NULL,
+		label TEXT NOT NULL DEFAULT '',
+		created_at TIMESTAMPTZ NOT NULL,
+		last_used_at TIMESTAMPTZ,
+		revoked_at TIMESTAMPTZ
+	);
+	CREATE INDEX idx_agent_keys_agent ON agent_keys(agent_id);
+	INSERT INTO agent_keys (id, agent_id, key_hash, label, created_at)
+		SELECT key_id, id, api_key_hash, 'default', created_at
+		FROM agents WHERE key_id IS NOT NULL AND revoked_at IS NULL;
+	UPDATE agents SET api_key_hash = '', key_id = NULL WHERE key_id IS NOT NULL;
+
+	ALTER TABLE agents ADD COLUMN invited_by TEXT;
+	CREATE TABLE invites (
+		id TEXT PRIMARY KEY,
+		token_hash TEXT NOT NULL UNIQUE,
+		agent_name TEXT NOT NULL,
+		owner TEXT NOT NULL,
+		invited_by TEXT NOT NULL REFERENCES agents(id),
+		created_at TIMESTAMPTZ NOT NULL,
+		expires_at TIMESTAMPTZ NOT NULL,
+		used_at TIMESTAMPTZ
+	);
+	CREATE INDEX idx_invites_inviter ON invites(invited_by);
 	`,
 }
 

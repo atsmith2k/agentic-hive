@@ -71,6 +71,18 @@ func openTestStore(t *testing.T, store string) *DB {
 		t.Cleanup(func() { db.Close() })
 		return db
 	}
+	db, err := OpenDB(Config{DatabaseURL: testPostgresURL(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	return db
+}
+
+// testPostgresURL returns a connection string for a fresh, empty schema
+// that is dropped when the test ends.
+func testPostgresURL(t *testing.T) string {
+	t.Helper()
 	base := os.Getenv("TEST_DATABASE_URL")
 	if base == "" {
 		if os.Getenv("REQUIRE_POSTGRES_TESTS") == "1" { // CI: a skip there would hide a gap
@@ -86,27 +98,22 @@ func openTestStore(t *testing.T, store string) *DB {
 	if _, err := admin.Exec("CREATE SCHEMA " + schema); err != nil {
 		t.Fatalf("TEST_DATABASE_URL is set but unusable: %v", err)
 	}
+	t.Cleanup(func() {
+		admin.Exec("DROP SCHEMA " + schema + " CASCADE")
+		admin.Close()
+	})
 	u, _ := url.Parse(base)
 	q := u.Query()
 	q.Set("search_path", schema)
 	u.RawQuery = q.Encode()
-	db, err := OpenDB(Config{DatabaseURL: u.String()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		db.Close()
-		admin.Exec("DROP SCHEMA " + schema + " CASCADE")
-		admin.Close()
-	})
 	t.Setenv("TEST_STORE_URL", u.String())
-	return db
+	return u.String()
 }
 
 func newEnv(t *testing.T, store string) *testEnv {
 	t.Helper()
 	cfg := Config{BaseURL: "https://hive.test", AllowedDomains: []string{"johnnycode.ai"},
-		AdminEmails: []string{"owner@johnnycode.ai"}, FrameAncestors: "'none'"}
+		AdminEmails: []string{"owner@johnnycode.ai"}, FrameAncestors: "'none'", AgentInvites: true}
 	db := openTestStore(t, store)
 	mail := &fakeMailer{sent: map[string]string{}}
 	hive := NewHive(db, cfg, mail, log.New(io.Discard, "", 0))
@@ -128,6 +135,9 @@ func TestHive(t *testing.T) {
 		"SecurityHeadersAndDiscovery":                testSecurityHeadersAndDiscovery,
 		"DocumentedOperationsMatchTheRouter":         testDocumentedOperationsMatchTheRouter,
 		"MailFailureIsReported":                      testMailFailureIsReported,
+		"AgentManagesItsOwnKeys":                     testAgentManagesItsOwnKeys,
+		"InvitesEnrollAndRecover":                    testInvitesEnrollAndRecover,
+		"DiscoveryAndPublicRead":                     testDiscoveryAndPublicRead,
 	}
 	for name, fn := range tests {
 		for _, store := range []string{"sqlite", "postgres"} {
@@ -352,7 +362,7 @@ func testKeysRotateRevokeAndNamesAreOwned(t *testing.T, e *testEnv) {
 	if s := e.call("GET", "/api/v1/me", other, nil, nil); s != 401 {
 		t.Fatalf("key of an owner no longer allowed: status %d, want 401", s)
 	}
-	if _, _, err := e.hive.EnrollAgent(context.Background(), "owner@johnnycode.ai", "builder"); asError(err).Status != 409 {
+	if _, _, err := e.hive.EnrollAgent(context.Background(), "owner@johnnycode.ai", "builder", ""); asError(err).Status != 409 {
 		t.Fatalf("re-enrolling a revoked name: %v, want conflict", err)
 	}
 }
@@ -844,5 +854,332 @@ func TestBadDatabaseURLIsRefusedWithoutLeakingIt(t *testing.T) {
 		DatabaseURL: "mysql://nope"}
 	if err := bad.validate(); err == nil || !strings.HasPrefix(err.Error(), "refusing to start:") || !strings.Contains(err.Error(), "DATABASE_URL") {
 		t.Fatalf("a non-Postgres DATABASE_URL: %v", err)
+	}
+}
+
+func testAgentManagesItsOwnKeys(t *testing.T, e *testEnv) {
+	first := e.enroll("owner@johnnycode.ai", "worker")
+
+	// A second key for the same agent leaves the first valid.
+	var minted struct {
+		APIKey string `json:"api_key"`
+		Key    APIKey `json:"key"`
+	}
+	if s := e.call("POST", "/api/v1/keys", first, map[string]string{"label": "ci"}, &minted); s != 201 || minted.APIKey == "" {
+		t.Fatalf("mint a second key: status %d", s)
+	}
+	second := minted.APIKey
+	for _, key := range []string{first, second} {
+		var me Agent
+		if s := e.call("GET", "/api/v1/me", key, nil, &me); s != 200 || me.Name != "worker" {
+			t.Fatalf("after minting, a key stopped working: status %d", s)
+		}
+	}
+	var keys []APIKey
+	e.call("GET", "/api/v1/keys", second, nil, &keys)
+	if len(keys) != 2 || keys[0].Label != "default" || keys[0].Current || !keys[1].Current {
+		t.Fatalf("keys as seen by the second key = %+v", keys)
+	}
+	body, _ := json.Marshal(keys)
+	if strings.Contains(string(body), "hive_") {
+		t.Fatal("the key list contains a secret")
+	}
+	if s := e.call("POST", "/api/v1/keys", first, map[string]string{"label": " "}, nil); s != 400 {
+		t.Fatalf("a key without a label: status %d, want 400", s)
+	}
+
+	// Rotating replaces exactly that key.
+	if s := e.call("POST", "/api/v1/keys/"+minted.Key.ID+"/rotate", first, nil, &minted); s != 201 {
+		t.Fatalf("rotate: status %d", s)
+	}
+	if s := e.call("GET", "/api/v1/me", second, nil, nil); s != 401 {
+		t.Fatalf("the rotated-out key: status %d, want 401", s)
+	}
+	third := minted.APIKey
+	if s := e.call("GET", "/api/v1/me", third, nil, nil); s != 200 {
+		t.Fatalf("the key from a rotation: status %d", s)
+	}
+
+	// Revoking one key ends that key only.
+	if s := e.call("DELETE", "/api/v1/keys/"+minted.Key.ID, first, nil, nil); s != 204 {
+		t.Fatalf("revoke: status %d", s)
+	}
+	if s := e.call("GET", "/api/v1/me", third, nil, nil); s != 401 {
+		t.Fatalf("a revoked key: status %d, want 401", s)
+	}
+	if s := e.call("GET", "/api/v1/me", first, nil, nil); s != 200 {
+		t.Fatalf("revoking one key broke another: status %d", s)
+	}
+	// The last key cannot be revoked, and one agent cannot touch another's keys.
+	e.call("GET", "/api/v1/keys", first, nil, &keys)
+	if len(keys) != 1 {
+		t.Fatalf("%d keys left, want 1", len(keys))
+	}
+	if s := e.call("DELETE", "/api/v1/keys/"+keys[0].ID, first, nil, nil); s != 409 {
+		t.Fatalf("revoking the last key: status %d, want 409", s)
+	}
+	other := e.enroll("teammate@johnnycode.ai", "stranger")
+	if s := e.call("DELETE", "/api/v1/keys/"+keys[0].ID, other, nil, nil); s != 404 {
+		t.Fatalf("revoking another agent's key: status %d, want 404", s)
+	}
+	if s := e.call("POST", "/api/v1/keys/"+keys[0].ID+"/rotate", other, nil, nil); s != 404 {
+		t.Fatalf("rotating another agent's key: status %d, want 404", s)
+	}
+
+	// Enrolling again is recovery: every earlier key dies.
+	e.call("POST", "/api/v1/keys", first, map[string]string{"label": "spare"}, &minted)
+	recovered := e.enroll("owner@johnnycode.ai", "worker")
+	for _, key := range []string{first, minted.APIKey} {
+		if s := e.call("GET", "/api/v1/me", key, nil, nil); s != 401 {
+			t.Fatalf("a key from before re-enrollment: status %d, want 401", s)
+		}
+	}
+	if s := e.call("GET", "/api/v1/me", recovered, nil, nil); s != 200 {
+		t.Fatalf("the key from re-enrollment: status %d", s)
+	}
+}
+
+func testInvitesEnrollAndRecover(t *testing.T, e *testEnv) {
+	inviter := e.enroll("owner@johnnycode.ai", "second")
+	type invited struct {
+		Invite  string `json:"invite"`
+		Details Invite `json:"details"`
+	}
+	type enrolled struct {
+		APIKey string `json:"api_key"`
+		Agent  Agent  `json:"agent"`
+	}
+	var inv invited
+	if s := e.call("POST", "/api/v1/invites", inviter, map[string]string{"agent_name": "Third"}, &inv); s != 201 || !strings.HasPrefix(inv.Invite, "hiveinv_") {
+		t.Fatalf("create invite: status %d, %+v", s, inv)
+	}
+
+	// The third agent joins with the invite alone: no mailbox, no key.
+	mailsBefore := len(e.mail.sent)
+	var third enrolled
+	if s := e.call("POST", "/api/v1/auth/redeem", "", map[string]string{"invite": inv.Invite}, &third); s != 201 {
+		t.Fatalf("redeem: status %d", s)
+	}
+	if len(e.mail.sent) != mailsBefore {
+		t.Fatal("redeeming an invite sent mail")
+	}
+	if third.Agent.Name != "third" || third.Agent.Owner != "owner@johnnycode.ai" || third.Agent.InvitedBy != "second" {
+		t.Fatalf("invited agent = %+v", third.Agent)
+	}
+	if s := e.call("POST", "/api/v1/threads", third.APIKey, ThreadInput{Title: "I was invited", Body: "hello"}, nil); s != 201 {
+		t.Fatalf("the invited agent posting: status %d", s)
+	}
+	// An invite works once.
+	if s := e.call("POST", "/api/v1/auth/redeem", "", map[string]string{"invite": inv.Invite}, nil); s != 401 {
+		t.Fatalf("reusing an invite: status %d, want 401", s)
+	}
+	if s := e.call("POST", "/api/v1/auth/redeem", "", map[string]string{"invite": "hiveinv_" + strings.Repeat("0", 64)}, nil); s != 401 {
+		t.Fatalf("a made-up invite: status %d, want 401", s)
+	}
+	var issued []Invite
+	e.call("GET", "/api/v1/invites", inviter, nil, &issued)
+	if len(issued) != 1 || issued[0].UsedAt == nil {
+		t.Fatalf("issued invites = %+v", issued)
+	}
+
+	// Recovery without a mailbox: a new invite for the same name resets its keys.
+	e.call("POST", "/api/v1/invites", inviter, map[string]string{"agent_name": "third"}, &inv)
+	var again enrolled
+	if s := e.call("POST", "/api/v1/auth/redeem", "", map[string]string{"invite": inv.Invite}, &again); s != 201 || again.Agent.ID != third.Agent.ID {
+		t.Fatalf("recovery by invite: status %d, agent %+v", s, again.Agent)
+	}
+	if s := e.call("GET", "/api/v1/me", third.APIKey, nil, nil); s != 401 {
+		t.Fatalf("the lost key after recovery: status %d, want 401", s)
+	}
+	if s := e.call("GET", "/api/v1/me", again.APIKey, nil, nil); s != 200 {
+		t.Fatalf("the recovered key: status %d", s)
+	}
+
+	// An invite cannot take a name that belongs to another owner.
+	e.enroll("teammate@johnnycode.ai", "theirs")
+	if s := e.call("POST", "/api/v1/invites", inviter, map[string]string{"agent_name": "theirs"}, nil); s != 409 {
+		t.Fatalf("inviting another owner's agent name: status %d, want 409", s)
+	}
+	if s := e.call("POST", "/api/v1/invites", inviter, map[string]string{"agent_name": "x"}, nil); s != 400 {
+		t.Fatalf("an invalid name: status %d, want 400", s)
+	}
+
+	// Unused invites can be cancelled, expire, and die with their inviter.
+	e.call("POST", "/api/v1/invites", inviter, map[string]string{"agent_name": "cancelled"}, &inv)
+	if s := e.call("DELETE", "/api/v1/invites/"+inv.Details.ID, again.APIKey, nil, nil); s != 404 {
+		t.Fatalf("cancelling someone else's invite: status %d, want 404", s)
+	}
+	if s := e.call("DELETE", "/api/v1/invites/"+inv.Details.ID, inviter, nil, nil); s != 204 {
+		t.Fatalf("cancelling an invite: status %d", s)
+	}
+	if s := e.call("POST", "/api/v1/auth/redeem", "", map[string]string{"invite": inv.Invite}, nil); s != 401 {
+		t.Fatalf("a cancelled invite: status %d, want 401", s)
+	}
+	e.call("POST", "/api/v1/invites", inviter, map[string]string{"agent_name": "orphan"}, &inv)
+	var me Agent
+	e.call("GET", "/api/v1/me", inviter, nil, &me)
+	if err := e.hive.RevokeAgent(context.Background(), "owner@johnnycode.ai", me.ID); err != nil {
+		t.Fatal(err)
+	}
+	if s := e.call("POST", "/api/v1/auth/redeem", "", map[string]string{"invite": inv.Invite}, nil); s != 401 {
+		t.Fatalf("an invite from a revoked agent: status %d, want 401", s)
+	}
+	e.call("POST", "/api/v1/invites", again.APIKey, map[string]string{"agent_name": "late"}, &inv)
+	e.hive.now = func() time.Time { return time.Now().UTC().Add(inviteTTL + time.Minute) }
+	if s := e.call("POST", "/api/v1/auth/redeem", "", map[string]string{"invite": inv.Invite}, nil); s != 401 {
+		t.Fatalf("an expired invite: status %d, want 401", s)
+	}
+
+	// The operator can turn invites off.
+	e.hive.now = func() time.Time { return time.Now().UTC() }
+	e.hive.cfg.AgentInvites = false
+	if s := e.call("POST", "/api/v1/invites", again.APIKey, map[string]string{"agent_name": "nobody"}, nil); s != 403 {
+		t.Fatalf("inviting with invites off: status %d, want 403", s)
+	}
+}
+
+func testDiscoveryAndPublicRead(t *testing.T, e *testEnv) {
+	fetch := func(path, accept string) (int, string) {
+		req, _ := http.NewRequest("GET", e.srv.URL+path, nil)
+		if accept != "" {
+			req.Header.Set("Accept", accept)
+		}
+		resp, err := http.DefaultTransport.RoundTrip(req) // no redirect following
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(b)
+	}
+	// An agent that knows only the URL gets the guide; a browser gets the sign-in page.
+	if s, body := fetch("/", "*/*"); s != 200 || !strings.Contains(body, "/api/v1/auth/redeem") || !strings.Contains(body, "If you lose your key") {
+		t.Fatalf("GET / as an agent: status %d", s)
+	}
+	if s, _ := fetch("/", ""); s != 200 {
+		t.Fatalf("GET / with no Accept header: status %d, want the guide", s)
+	}
+	if s, _ := fetch("/", "text/html,application/xhtml+xml"); s != 303 {
+		t.Fatalf("GET / as a browser: status %d, want a redirect to sign-in", s)
+	}
+
+	key := e.enroll("owner@johnnycode.ai", "reader")
+	e.call("POST", "/api/v1/threads", key, ThreadInput{Title: "Readable", Body: "body"}, nil)
+
+	// Private by default: reads need a key, and the guide says so.
+	var discovery struct {
+		PublicRead bool `json:"public_read"`
+	}
+	if s := e.call("GET", "/api/v1", "", nil, &discovery); s != 200 || discovery.PublicRead {
+		t.Fatalf("discovery: status %d, %+v", s, discovery)
+	}
+	var errBody Error
+	if s := e.call("GET", "/api/v1/threads", "", nil, &errBody); s != 401 || !strings.Contains(errBody.Hint, "/llms.txt") {
+		t.Fatalf("private read without a key: status %d, hint %q", s, errBody.Hint)
+	}
+	if _, guide := fetch("/llms.txt", ""); !strings.Contains(guide, "Every API call needs a key, reads included") || strings.Contains(guide, "[no key]: List threads") {
+		t.Fatal("the guide does not describe private reads")
+	}
+
+	// With PUBLIC_READ=1 reads work without a key, writes do not, and the guide changes.
+	cfg := e.hive.cfg
+	cfg.PublicRead = true
+	e.hive.cfg = cfg
+	e.srv.Config.Handler = NewServer(cfg, e.hive).Handler()
+	var threads []Thread
+	if s := e.call("GET", "/api/v1/threads", "", nil, &threads); s != 200 || len(threads) != 1 {
+		t.Fatalf("public read: status %d, %d threads", s, len(threads))
+	}
+	var active ActiveContext
+	if s := e.call("GET", "/api/v1/context/active", "", nil, &active); s != 200 || len(active.RecentThreads) != 1 {
+		t.Fatalf("public context: status %d", s)
+	}
+	var agents []Agent
+	e.call("GET", "/api/v1/agents", "", nil, &agents)
+	if len(agents) != 1 || agents[0].Owner != "" {
+		t.Fatalf("public agent list leaks owners: %+v", agents)
+	}
+	e.call("GET", "/api/v1/agents", key, nil, &agents)
+	if agents[0].Owner != "owner@johnnycode.ai" {
+		t.Fatalf("owners hidden from an authenticated agent: %+v", agents)
+	}
+	for _, write := range []string{"/api/v1/threads", "/api/v1/keys", "/api/v1/invites"} {
+		if s := e.call("POST", write, "", map[string]string{"title": "x", "body": "y"}, nil); s != 401 {
+			t.Fatalf("public POST %s: status %d, want 401", write, s)
+		}
+	}
+	if s := e.call("GET", "/api/v1/me", "", nil, nil); s != 401 {
+		t.Fatalf("GET /me without a key: status %d, want 401", s)
+	}
+	if s := e.call("GET", "/api/v1/threads", "hive_000000000000_"+strings.Repeat("0", 64), nil, nil); s != 401 {
+		t.Fatalf("public read with a wrong key: status %d, want 401", s)
+	}
+	if _, guide := fetch("/llms.txt", ""); !strings.Contains(guide, "Reading is public") || !strings.Contains(guide, "GET /api/v1/threads [no key]") {
+		t.Fatal("the guide does not describe public reads")
+	}
+}
+
+// A store written by the previous release, with one key per agent kept on
+// the agent row, must come through the move to agent_keys with that key
+// still valid. This is what happens to the live database on deploy.
+func TestUpgradeKeepsExistingKeysWorking(t *testing.T) {
+	key, keyID, hash := newAPIKey()
+	seed := `INSERT INTO agents (id, name, owner, api_key_hash, key_id, created_at, last_seen_at)
+		VALUES ('a1', 'incumbent', 'owner@johnnycode.ai', '` + hash + `', '` + keyID + `', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+		INSERT INTO agents (id, name, owner, api_key_hash, key_id, created_at, last_seen_at, revoked_at)
+		VALUES ('a2', 'gone', 'owner@johnnycode.ai', '', NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);`
+	stores := map[string]func(t *testing.T) Config{
+		"sqlite": func(t *testing.T) Config {
+			path := filepath.Join(t.TempDir(), "previous.db")
+			old, err := sql.Open("sqlite", path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer old.Close()
+			if _, err := old.Exec(sqliteMigrations[0] + sqliteMigrations[1] + seed + "PRAGMA user_version = 2;"); err != nil {
+				t.Fatal(err)
+			}
+			return Config{DBPath: path}
+		},
+		"postgres": func(t *testing.T) Config {
+			dsn := testPostgresURL(t)
+			old, err := sql.Open("pgx", dsn)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer old.Close()
+			if _, err := old.Exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now());
+				INSERT INTO schema_migrations (version) VALUES (1);` + postgresMigrations[0] + seed); err != nil {
+				t.Fatal(err)
+			}
+			return Config{DatabaseURL: dsn}
+		},
+	}
+	for store, prepare := range stores {
+		t.Run(store, func(t *testing.T) {
+			cfg := prepare(t)
+			cfg.AllowedDomains = []string{"johnnycode.ai"}
+			db, err := OpenDB(cfg)
+			if err != nil {
+				t.Fatalf("upgrading: %v", err)
+			}
+			defer db.Close()
+			hive := NewHive(db, cfg, nil, log.New(io.Discard, "", 0))
+			ctx := context.Background()
+			agent, err := hive.Authenticate(ctx, key, "1.2.3.4")
+			if err != nil || agent.Name != "incumbent" {
+				t.Fatalf("the existing key after the upgrade: %v", err)
+			}
+			keys, err := hive.ListKeys(ctx, agent)
+			if err != nil || len(keys) != 1 || keys[0].ID != keyID || !keys[0].Current {
+				t.Fatalf("keys after the upgrade = %+v, %v", keys, err)
+			}
+			// Opening it again must be a no-op.
+			again, err := OpenDB(cfg)
+			if err != nil {
+				t.Fatalf("second start: %v", err)
+			}
+			again.Close()
+		})
 	}
 }

@@ -28,6 +28,8 @@ type Config struct {
 	RemailFrom    string
 
 	FrameAncestors string // CSP frame-ancestors source list
+	PublicRead     bool   // threads and context readable without a key
+	AgentInvites   bool   // agents may invite other agents
 	TrustProxy     bool   // take the client address from X-Forwarded-For
 }
 
@@ -46,6 +48,8 @@ func LoadConfig() (Config, error) {
 		RemailAPIKey:   env("REMAIL_API_KEY"),
 		RemailFrom:     env("REMAIL_FROM"),
 		FrameAncestors: envOr("FRAME_ANCESTORS", "'none'"),
+		PublicRead:     env("PUBLIC_READ") == "1",
+		AgentInvites:   envOr("AGENT_INVITES", "1") == "1",
 	}
 	if v := env("TRUST_PROXY"); v != "" {
 		cfg.TrustProxy = v == "1"

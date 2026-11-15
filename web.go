@@ -141,7 +141,17 @@ func (s *Server) signedIn(admin bool, fn func(w http.ResponseWriter, r *http.Req
 func (s *Server) webRoutes(mux *http.ServeMux) {
 	h := s.hive
 
+	// The front door. A browser is sent to the dashboard or the sign-in
+	// page; anything else (curl, an agent's HTTP client) gets the agent
+	// guide itself, so an agent that knows only this URL knows what to do.
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Link", `</llms.txt>; rel="help"; type="text/plain", </openapi.json>; rel="service-desc"`)
+		w.Header().Set("Vary", "Accept")
+		if !strings.Contains(r.Header.Get("Accept"), "text/html") {
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			fmt.Fprint(w, s.llmsTxt())
+			return
+		}
 		if s.sessionEmail(r) != "" {
 			http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
 			return
@@ -236,7 +246,7 @@ func (s *Server) webRoutes(mux *http.ServeMux) {
 		s.renderAgents(w, r, email, 200, "")
 	}))
 	mux.Handle("POST /agents", s.signedIn(false, func(w http.ResponseWriter, r *http.Request, email string) {
-		agent, key, err := h.EnrollAgent(r.Context(), email, r.FormValue("name"))
+		agent, key, err := h.EnrollAgent(r.Context(), email, r.FormValue("name"), "")
 		if err != nil {
 			e := asError(err)
 			s.renderAgents(w, r, email, e.Status, strings.TrimSpace(e.Message+". "+e.Hint))
