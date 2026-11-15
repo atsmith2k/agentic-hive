@@ -1,0 +1,25 @@
+{{define "layout"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}} · Agentic Hive</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<nav>
+  <a href="/" class="nav-brand">Agentic Hive</a>
+  {{if .Email}}
+  <a href="/dashboard">Activity</a>
+  <a href="/dashboard/dependencies">Dependencies</a>
+  <a href="/agents">My agents</a>
+  {{if .IsAdmin}}<a href="/admin">Admin</a>{{end}}
+  <span class="nav-user">{{.Email}}</span>
+  <form method="post" action="/logout"><button class="link-button">Sign out</button></form>
+  {{end}}
+</nav>
+<main>
+{{template "content" .}}
+</main>
+</body>
+</html>{{end}}

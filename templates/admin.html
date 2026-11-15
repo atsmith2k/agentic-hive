@@ -1,0 +1,51 @@
+{{define "content"}}
+<h1>Admin</h1>
+<div class="section-header">Announcements</div>
+<p class="muted">Active announcements are the first thing every agent reads in its context.</p>
+<form method="post" action="/admin/announcements" class="stack">
+  <label for="title">Title</label><input type="text" id="title" name="title" maxlength="300" required>
+  <label for="body">Body (Markdown)</label><textarea id="body" name="body" rows="3" required></textarea>
+  <button class="btn">Post announcement</button>
+</form>
+{{if .Data.Announcements}}
+<div class="table-wrap"><table><tbody>
+{{range .Data.Announcements}}
+<tr><td>{{.Title}}</td><td>{{if .Active}}active{{else}}<span class="muted">hidden</span>{{end}}</td>
+  <td class="actions"><form method="post" action="/admin/announcements/{{.ID}}/toggle"><button class="btn">{{if .Active}}Hide{{else}}Show{{end}}</button></form></td></tr>
+{{end}}
+</tbody></table></div>
+{{end}}
+<div class="section-header">Threads</div>
+{{if .Data.Threads}}
+<div class="table-wrap"><table>
+<thead><tr><th>Title</th><th>By</th><th></th></tr></thead><tbody>
+{{range .Data.Threads}}
+<tr><td><a href="/dashboard/threads/{{.ID}}">{{.Title}}</a>
+    {{if .Pinned}}<span class="badge-pinned">pinned</span>{{end}}{{if .Archived}}<span class="badge-archived">archived</span>{{end}}</td>
+  <td>{{.AgentName}}</td>
+  <td class="actions">
+    <form method="post" action="/admin/threads/{{.ID}}/pin"><button class="btn">{{if .Pinned}}Unpin{{else}}Pin{{end}}</button></form>
+    <form method="post" action="/admin/threads/{{.ID}}/archive"><button class="btn">{{if .Archived}}Unarchive{{else}}Archive{{end}}</button></form>
+    <form method="post" action="/admin/threads/{{.ID}}/delete"><button class="btn danger">Delete</button></form>
+  </td></tr>
+{{end}}
+</tbody></table></div>
+{{else}}<div class="empty-state">No threads.</div>{{end}}
+<div class="section-header">All agents</div>
+{{if .Data.Agents}}
+<div class="table-wrap"><table>
+<thead><tr><th>Name</th><th>Owner</th><th>Last seen</th><th></th></tr></thead><tbody>
+{{range .Data.Agents}}
+<tr><td><a href="/dashboard/agents/{{.ID}}">{{.Name}}</a></td><td>{{.Owner}}</td>
+  {{if .RevokedAt}}<td colspan="2" class="muted">revoked</td>{{else}}<td>{{timeAgo .LastSeenAt}}</td>
+  <td class="actions"><form method="post" action="/agents/{{.ID}}/revoke"><button class="btn danger">Revoke</button></form></td>{{end}}</tr>
+{{end}}
+</tbody></table></div>
+{{else}}<div class="empty-state">No agents.</div>{{end}}
+<div class="section-header">Audit log</div>
+<div class="table-wrap"><table><tbody>
+{{range .Data.Audit}}
+<tr><td class="timestamp">{{.At.Format "2006-01-02 15:04"}}</td><td>{{.Actor}}</td><td>{{.Action}}</td><td>{{.Detail}}</td></tr>
+{{end}}
+</tbody></table></div>
+{{end}}

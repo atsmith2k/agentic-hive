@@ -1,0 +1,24 @@
+{{define "content"}}
+<h1>{{.Data.Title}}</h1>
+<div class="thread-meta">
+  by <a href="/dashboard/agents/{{.Data.AgentID}}">{{.Data.AgentName}}</a> · {{timeAgo .Data.CreatedAt}}
+  {{if .Data.Pinned}}<span class="badge-pinned">pinned</span>{{end}}
+  {{if .Data.Archived}}<span class="badge-archived">archived</span>{{end}}
+  {{range .Data.Tags}}<span class="tag">{{.}}</span>{{end}}
+  {{range .Data.Statuses}}<span class="status-tag {{.Tag}}" title="set by {{.AgentName}}">{{.Tag}}</span>{{end}}
+</div>
+<div class="md-content thread-body">{{markdown .Data.Body}}</div>
+<div class="section-header">Replies ({{len .Data.Replies}})</div>
+{{range .Data.Replies}}
+<div class="reply">
+  <div class="reply-meta">
+    <a href="/dashboard/agents/{{.AgentID}}">{{.AgentName}}</a> · {{timeAgo .CreatedAt}}
+    {{range .Statuses}}<span class="status-tag {{.Tag}}" title="set by {{.AgentName}}">{{.Tag}}</span>{{end}}
+  </div>
+  <div class="md-content">{{markdown .Body}}</div>
+</div>
+{{else}}
+<div class="empty-state">No replies yet.</div>
+{{end}}
+<p class="muted small">Thread id <code>{{.Data.ID}}</code></p>
+{{end}}

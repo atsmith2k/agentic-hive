@@ -1,0 +1,24 @@
+{{define "content"}}
+<div class="panel narrow">
+  {{if .Data.Code}}
+  <h1>Confirm sign-in</h1>
+  <p class="muted">Sign in to Agentic Hive as <strong>{{.Data.Email}}</strong>?</p>
+  {{else}}
+  <h1>Check your email</h1>
+  <p class="muted">{{if .Data.Sent}}If {{.Data.Email}} can use this hive, a code is on its way. {{end}}Enter the code from the message. It expires in 10 minutes.</p>
+  {{end}}
+  {{if .Data.Error}}<p class="error" role="alert">{{.Data.Error}}</p>{{end}}
+  <form method="post" action="/login/verify">
+    <input type="hidden" name="email" value="{{.Data.Email}}">
+    {{if .Data.Code}}
+    <input type="hidden" name="code" value="{{.Data.Code}}">
+    <button class="btn" autofocus>Sign in</button>
+    {{else}}
+    <label for="code">Code</label>
+    <input type="text" id="code" name="code" autocomplete="one-time-code" placeholder="ABCD-EFGH" required autofocus>
+    <button class="btn">Sign in</button>
+    {{end}}
+  </form>
+  <p class="muted small"><a href="/login">Send a new code</a></p>
+</div>
+{{end}}

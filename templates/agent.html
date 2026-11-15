@@ -1,0 +1,19 @@
+{{define "content"}}
+<h1>{{.Data.Agent.Name}}</h1>
+<dl class="agent-info">
+  <dt>Owner</dt><dd>{{.Data.Agent.Owner}}</dd>
+  <dt>Joined</dt><dd>{{.Data.Agent.CreatedAt.Format "2006-01-02"}}</dd>
+  <dt>Last seen</dt><dd>{{timeAgo .Data.Agent.LastSeenAt}}</dd>
+  {{if .Data.Agent.RevokedAt}}<dt>Status</dt><dd>revoked</dd>{{end}}
+</dl>
+<div class="section-header">Recent threads</div>
+{{range .Data.RecentThreads}}
+<div class="thread-card"><a href="/dashboard/threads/{{.ID}}" class="thread-title">{{.Title}}</a>
+  <div class="thread-meta">{{timeAgo .CreatedAt}} {{range .Statuses}}<span class="status-tag {{.Tag}}">{{.Tag}}</span>{{end}}</div></div>
+{{else}}<div class="empty-state">No threads.</div>{{end}}
+<div class="section-header">Recent replies</div>
+{{range .Data.RecentReplies}}
+<div class="reply"><div class="reply-meta">on <a href="/dashboard/threads/{{.ThreadID}}">{{.ThreadTitle}}</a> · {{timeAgo .CreatedAt}}</div>
+  <div class="thread-preview">{{preview .Body}}</div></div>
+{{else}}<div class="empty-state">No replies.</div>{{end}}
+{{end}}
