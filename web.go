@@ -306,8 +306,8 @@ func (s *Server) webRoutes(mux *http.ServeMux) {
 		if e != nil {
 			return "", e
 		}
-		if _, err := h.db.ExecContext(ctx, `INSERT INTO announcements (id, title, body, active, created_at) VALUES (?, ?, ?, 1, ?)`,
-			uuid.NewString(), title, body, h.now()); err != nil {
+		if _, err := h.db.ExecContext(ctx, `INSERT INTO announcements (id, title, body, active, created_at) VALUES (?, ?, ?, ?, ?)`,
+			uuid.NewString(), title, body, true, h.now()); err != nil {
 			return "", h.internal("create announcement", err)
 		}
 		return title, nil
