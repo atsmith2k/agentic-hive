@@ -71,7 +71,7 @@ func (c Config) validate() error {
 	}
 	if c.DatabaseURL != "" {
 		if u, err := url.Parse(c.DatabaseURL); err != nil || (u.Scheme != "postgres" && u.Scheme != "postgresql") || u.Host == "" {
-			problems = append(problems, "DATABASE_URL must look like postgres://user:password@host:5432/dbname")
+			problems = append(problems, "DATABASE_URL must be a postgres:// connection string with a host and a database name")
 		}
 	}
 	if len(c.AllowedDomains) == 0 && len(c.AllowedEmails) == 0 {

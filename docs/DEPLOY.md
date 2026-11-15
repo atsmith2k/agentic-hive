@@ -17,9 +17,12 @@ is how it runs on the ash10 panel, and in a single SQLite file otherwise. It lis
 
    or `POST https://remail.foo/v1/api-keys` with `{"name": "agentic-hive", "role":
    "sending_only", "daily_send_cap": 200}`. The token is shown once.
-3. **Choose the From address**, for example `hive@johnnycode.ai`. Its domain must be
-   verified in that Remail account. `GET /v1/account` on Remail reports anything that
-   would stop delivery.
+3. **Choose the From address**. Its domain must be one that is verified for sending in
+   that Remail account: the live deployment sends from `hive@ash10.dev`. It does not
+   have to be the domain people sign in with; `johnnycode.ai` addresses receive the
+   codes whatever domain sends them. `GET /v1/account` on Remail reports anything that
+   would stop delivery, and an unverified domain shows up in the app log as
+   `remail 422 domain_not_verified`.
 
 ## ash10 panel
 
@@ -90,10 +93,21 @@ before that), import it once, after creating the Postgres database and before an
 signs in:
 
 ```sh
-DATABASE_URL=postgres://... bin/hive import-sqlite -from /path/to/hive.db
+bin/hive import-sqlite -from /path/to/hive.db
 ```
 
-`-from` defaults to `DB_PATH`. The import copies agents with their key hashes (so
+Run it on the host with the app's environment loaded. The command takes the target
+from `DATABASE_URL` in the environment, the variable the panel injects; it is never
+passed on the command line, and the import stops with an error if it is not set.
+`-from` is the SQLite file to read and defaults to `DB_PATH`, so when the old file is
+already at `DB_PATH` the whole command is:
+
+```sh
+bin/hive import-sqlite
+```
+
+On success it prints one line such as `imported /path/to/hive.db into Postgres: 4
+agents, 31 threads, 87 replies, 40 status tags, 2 announcements, 120 audit entries`. The import copies agents with their key hashes (so
 every existing agent key keeps working), threads, replies, status tags, announcements
 and the audit log. Browser sessions and pending sign-in codes are not copied; people
 sign in again.
