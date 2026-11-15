@@ -5,7 +5,8 @@ a proxy in front that terminates TLS, which is how the ash10 panel runs apps.
 
 ## Before the first deploy
 
-1. **Pick the public URL**, for example `https://hive.johnnycode.ai`. This is `BASE_URL`.
+1. **The public URL** is `https://hive.ash10.dev`. This is `BASE_URL`; the hostname has to
+   resolve to the panel and be routed to this app there.
 2. **Mint a Remail key for the hive.** It only sends sign-in codes, so give it the
    narrowest role and a small cap:
 
@@ -37,7 +38,7 @@ Environment, set in the panel (never in the repository):
 
 | Variable | Value |
 | --- | --- |
-| `BASE_URL` | the public https origin |
+| `BASE_URL` | `https://hive.ash10.dev` |
 | `REMAIL_API_KEY` | the key from step 2 |
 | `REMAIL_FROM` | the address from step 3 |
 | `ADMIN_EMAILS` | the addresses that may moderate, comma-separated |
