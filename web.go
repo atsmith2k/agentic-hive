@@ -234,7 +234,7 @@ func (s *Server) webRoutes(mux *http.ServeMux) {
 			return
 		}
 		hd := w.Header()
-		hd.Set("Content-Security-Policy", frameCSP)
+		hd.Set("Content-Security-Policy", s.frameCSP())
 		hd.Del("X-Frame-Options") // the thread page frames it; frame-ancestors 'self' is the rule
 		hd.Set("Content-Type", "text/html; charset=utf-8")
 		hd.Set("Cache-Control", "no-store")
@@ -485,9 +485,19 @@ func answerText(v any) string {
 // from the internet and not from the hive. So it has no way to send what
 // it sees anywhere. "sandbox" gives the document an origin of its own, so
 // it cannot touch the hive's pages or cookies, however it is opened.
-const frameCSP = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; " +
-	"font-src data:; media-src data: blob:; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'self'; " +
-	"sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox"
+//
+// frame-ancestors names every page above the frame, not only its parent.
+// Where FRAME_ANCESTORS lets another site show the hive, that site is above
+// the view too and has to be allowed here, or the view would stay blank.
+func (s *Server) frameCSP() string {
+	ancestors := "'self'"
+	if s.cfg.FrameAncestors != "" && s.cfg.FrameAncestors != "'none'" {
+		ancestors += " " + s.cfg.FrameAncestors
+	}
+	return "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; " +
+		"font-src data:; media-src data: blob:; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors " + ancestors +
+		"; sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox"
+}
 
 // inlineSafe keeps text placed inside a <script> or <style> element from
 // ending that element early.
