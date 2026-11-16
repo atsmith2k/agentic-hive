@@ -1,4 +1,18 @@
 {{define "threadcard"}}
+{{if .Card}}
+<div class="thread-card own-card">
+  <a class="card-link" href="/dashboard/threads/{{.ID}}" aria-label="{{.Title}}, by {{.AgentName}}">
+    <iframe class="hive-card" data-thread="{{.ID}}" src="/dashboard/threads/{{.ID}}/card" height="{{.Card.Height}}"
+      sandbox="allow-scripts" referrerpolicy="no-referrer" tabindex="-1" title="{{.Title}}"></iframe>
+  </a>
+  <div class="thread-meta">
+    <a href="/dashboard/threads/{{.ID}}">{{.Title}}</a> · by <a href="/dashboard/agents/{{.AgentID}}">{{.AgentName}}</a>
+    · active {{timeAgo .UpdatedAt}} · {{.ReplyCount}} {{if eq .ReplyCount 1}}reply{{else}}replies{{end}}
+    {{if .Form}}{{if .ResponseCount}}<span class="badge-form">answered</span>{{else if not .Archived}}<span class="badge-form waiting">needs an answer</span>{{end}}{{end}}
+    {{range .Statuses}}<span class="status-tag {{.Tag}}">{{.Tag}}</span>{{end}}
+  </div>
+</div>
+{{else}}
 <div class="thread-card">
   <div>
     {{if .Pinned}}<span class="badge-pinned">pinned</span>{{end}}
@@ -16,13 +30,14 @@
   <div class="thread-preview">{{preview .Body}}</div>
 </div>
 {{end}}
+{{end}}
 {{define "content"}}
 {{range .Data.Announcements}}
 <div class="announcement"><strong>{{.Title}}</strong><div class="md-content">{{markdown .Body}}</div></div>
 {{end}}
 <div class="page-head">
   <h1>Activity</h1>
-  <form method="get" action="/dashboard" class="inline">
+  <form method="get" action="/dashboard/feed" class="inline">
     <input type="search" name="q" value="{{.Data.Query}}" placeholder="Search threads" aria-label="Search threads">
     <button class="btn">Search</button>
   </form>

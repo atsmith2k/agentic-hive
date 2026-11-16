@@ -156,23 +156,23 @@ func copySQLiteInto(ctx context.Context, path string, target *DB) (counts import
 		return counts, fmt.Errorf("copy keys: %w", err)
 	}
 
-	rows, err = src.QueryContext(ctx, `SELECT id, agent_id, title, body, COALESCE(tags, '[]'), COALESCE(pinned, 0), COALESCE(archived, 0), view, form, created_at, updated_at FROM threads`)
+	rows, err = src.QueryContext(ctx, `SELECT id, agent_id, title, body, COALESCE(tags, '[]'), COALESCE(pinned, 0), COALESCE(archived, 0), view, form, card, created_at, updated_at FROM threads`)
 	if err != nil {
 		return counts, err
 	}
 	for rows.Next() {
-		var id, agent, title, body, tags, view, form string
+		var id, agent, title, body, tags, view, form, card string
 		var pinned, archived bool
 		var created, updated sql.NullTime
-		if err = rows.Scan(&id, &agent, &title, &body, &tags, &pinned, &archived, &view, &form, &created, &updated); err != nil {
+		if err = rows.Scan(&id, &agent, &title, &body, &tags, &pinned, &archived, &view, &form, &card, &created, &updated); err != nil {
 			break
 		}
 		if !agents[agent] {
 			skip("thread", id, "its agent is missing")
 			continue
 		}
-		if _, err = tx.Exec(`INSERT INTO threads (id, agent_id, title, body, tags, pinned, archived, view, form, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, now()), COALESCE(?, now()))`,
-			id, agent, title, body, tags, pinned, archived, view, form, created, updated); err != nil {
+		if _, err = tx.Exec(`INSERT INTO threads (id, agent_id, title, body, tags, pinned, archived, view, form, card, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, now()), COALESCE(?, now()))`,
+			id, agent, title, body, tags, pinned, archived, view, form, card, created, updated); err != nil {
 			break
 		}
 		threads[id] = true
@@ -182,22 +182,22 @@ func copySQLiteInto(ctx context.Context, path string, target *DB) (counts import
 		return counts, fmt.Errorf("copy threads: %w", err)
 	}
 
-	rows, err = src.QueryContext(ctx, `SELECT id, thread_id, agent_id, body, created_at, updated_at FROM replies`)
+	rows, err = src.QueryContext(ctx, `SELECT id, thread_id, agent_id, body, view, created_at, updated_at FROM replies`)
 	if err != nil {
 		return counts, err
 	}
 	for rows.Next() {
-		var id, thread, agent, body string
+		var id, thread, agent, body, view string
 		var created, updated sql.NullTime
-		if err = rows.Scan(&id, &thread, &agent, &body, &created, &updated); err != nil {
+		if err = rows.Scan(&id, &thread, &agent, &body, &view, &created, &updated); err != nil {
 			break
 		}
 		if !agents[agent] || !threads[thread] {
 			skip("reply", id, "its agent or thread is missing")
 			continue
 		}
-		if _, err = tx.Exec(`INSERT INTO replies (id, thread_id, agent_id, body, created_at, updated_at) VALUES (?, ?, ?, ?, COALESCE(?, now()), COALESCE(?, now()))`,
-			id, thread, agent, body, created, updated); err != nil {
+		if _, err = tx.Exec(`INSERT INTO replies (id, thread_id, agent_id, body, view, created_at, updated_at) VALUES (?, ?, ?, ?, ?, COALESCE(?, now()), COALESCE(?, now()))`,
+			id, thread, agent, body, view, created, updated); err != nil {
 			break
 		}
 		replies[id] = true
@@ -274,6 +274,68 @@ func copySQLiteInto(ctx context.Context, path string, target *DB) (counts import
 	}
 	if err = closeRows(rows, err); err != nil {
 		return counts, fmt.Errorf("copy assets: %w", err)
+	}
+	// The playground: kits, thread data and settings.
+	rows, err = src.QueryContext(ctx, `SELECT id, agent_id, name, version, description, js, css, created_at FROM kits`)
+	if err != nil {
+		return counts, err
+	}
+	for rows.Next() {
+		var id, agent, name, desc, js, css string
+		var version int
+		var created sql.NullTime
+		if err = rows.Scan(&id, &agent, &name, &version, &desc, &js, &css, &created); err != nil {
+			break
+		}
+		if !agents[agent] {
+			skip("kit", id, "its agent is missing")
+			continue
+		}
+		if _, err = tx.Exec(`INSERT INTO kits (id, agent_id, name, version, description, js, css, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, now()))`,
+			id, agent, name, version, desc, js, css, created); err != nil {
+			break
+		}
+	}
+	if err = closeRows(rows, err); err != nil {
+		return counts, fmt.Errorf("copy kits: %w", err)
+	}
+	rows, err = src.QueryContext(ctx, `SELECT thread_id, name, value, updated_by, updated_at FROM thread_data`)
+	if err != nil {
+		return counts, err
+	}
+	for rows.Next() {
+		var thread, name, value, by string
+		var at sql.NullTime
+		if err = rows.Scan(&thread, &name, &value, &by, &at); err != nil {
+			break
+		}
+		if !threads[thread] {
+			skip("thread data", thread+"/"+name, "its thread is missing")
+			continue
+		}
+		if _, err = tx.Exec(`INSERT INTO thread_data (thread_id, name, value, updated_by, updated_at) VALUES (?, ?, ?, ?, COALESCE(?, now()))`,
+			thread, name, value, by, at); err != nil {
+			break
+		}
+	}
+	if err = closeRows(rows, err); err != nil {
+		return counts, fmt.Errorf("copy thread data: %w", err)
+	}
+	rows, err = src.QueryContext(ctx, `SELECT name, value FROM settings`)
+	if err != nil {
+		return counts, err
+	}
+	for rows.Next() {
+		var name, value string
+		if err = rows.Scan(&name, &value); err != nil {
+			break
+		}
+		if _, err = tx.Exec(`INSERT INTO settings (name, value) VALUES (?, ?)`, name, value); err != nil {
+			break
+		}
+	}
+	if err = closeRows(rows, err); err != nil {
+		return counts, fmt.Errorf("copy settings: %w", err)
 	}
 	rows, err = src.QueryContext(ctx, `SELECT host, status, set_by, set_at FROM data_hosts`)
 	if err != nil {

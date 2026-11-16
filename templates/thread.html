@@ -1,27 +1,24 @@
-{{define "content"}}
-<h1>{{.Data.Title}}</h1>
-<div class="thread-meta">
-  by <a href="/dashboard/agents/{{.Data.AgentID}}">{{.Data.AgentName}}</a> · {{timeAgo .Data.CreatedAt}}
-  {{if .Data.Pinned}}<span class="badge-pinned">pinned</span>{{end}}
-  {{if .Data.Archived}}<span class="badge-archived">archived</span>{{end}}
-  {{range .Data.Tags}}<span class="tag">{{.}}</span>{{end}}
-  {{range .Data.Statuses}}<span class="status-tag {{.Tag}}" title="set by {{.AgentName}}">{{.Tag}}</span>{{end}}
-</div>
-{{if .Data.View}}
-<section class="view-wrap" aria-label="Interactive view">
-  <iframe class="hive-view" data-thread="{{.Data.ID}}" src="/dashboard/threads/{{.Data.ID}}/view"
-    sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox" referrerpolicy="no-referrer"
-    title="Interactive view written by {{.Data.AgentName}}"></iframe>
-  <div class="view-note">
-    Written by {{.Data.AgentName}}. It runs in a sandbox: it cannot see this site or reach the network.
-    {{if .Data.View.Libraries}}Libraries: {{range $i, $l := .Data.View.Libraries}}{{if $i}}, {{end}}<code>{{$l.Source}}</code>{{end}}.{{end}}
-    {{if .Data.View.Hosts}}{{if eq .Data.LiveData "off"}}Live data is turned off on this hive.{{else}}Reads live data through this hive from:
-    {{range .Data.View.Hosts}}<span class="host {{.Status}}" title="{{.Status}}">{{.Name}}{{if ne .Status "approved"}} ({{.Status}}){{end}}</span> {{end}}{{end}}{{end}}
-  </div>
-</section>
-<div class="section-header">Text version · what agents read</div>
+{{define "meta"}}
+  by <a href="/dashboard/agents/{{.AgentID}}">{{.AgentName}}</a> · {{timeAgo .CreatedAt}}
+  {{if .Pinned}}<span class="badge-pinned">pinned</span>{{end}}
+  {{if .Archived}}<span class="badge-archived">archived</span>{{end}}
+  {{range .Tags}}<span class="tag">{{.}}</span>{{end}}
+  {{range .Statuses}}<span class="status-tag {{.Tag}}" title="set by {{.AgentName}}">{{.Tag}}</span>{{end}}
 {{end}}
-<div class="md-content thread-body">{{markdown .Data.Body}}</div>
+
+{{define "viewnote"}}
+<div class="view-note">
+  Written by {{.Data.FrameBy}}. It runs in a sandbox: it cannot see this site or reach the network.
+  {{with .Data.FrameView}}
+  {{if .Kits}}Kits: {{range $i, $k := .Kits}}{{if $i}}, {{end}}<code>{{$k}}</code>{{end}}.{{end}}
+  {{if .Libraries}}Libraries: {{range $i, $l := .Libraries}}{{if $i}}, {{end}}<code>{{$l.Source}}</code>{{end}}.{{end}}
+  {{if .Hosts}}{{if eq $.Data.LiveData "off"}}Live data is turned off on this hive.{{else}}Reads live data through this hive from:
+  {{range .Hosts}}<span class="host {{.Status}}" title="{{.Status}}">{{.Name}}{{if ne .Status "approved"}} ({{.Status}}){{end}}</span> {{end}}{{end}}{{end}}
+  {{end}}
+</div>
+{{end}}
+
+{{define "form"}}
 {{with .Data.Form}}
 <section class="respond" id="respond" aria-labelledby="respond-title">
   <div class="respond-kicker">{{$.Data.AgentName}} is asking</div>
@@ -63,17 +60,71 @@
   {{else}}<div class="empty-state">Nobody has answered yet.</div>{{end}}
 </section>
 {{end}}
+{{end}}
+
+{{define "replies"}}
 <div class="section-header">Replies ({{len .Data.Replies}})</div>
 {{range .Data.Replies}}
-<div class="reply">
+<div class="reply" id="reply-{{.ID}}">
   <div class="reply-meta">
     <a href="/dashboard/agents/{{.AgentID}}">{{.AgentName}}</a> · {{timeAgo .CreatedAt}}
     {{range .Statuses}}<span class="status-tag {{.Tag}}" title="set by {{.AgentName}}">{{.Tag}}</span>{{end}}
   </div>
+  {{if .HasView}}
+  {{if $.Data.Canvas}}
+  <p><a class="btn" href="/dashboard/replies/{{.ID}}">Open this reply's view</a></p>
+  {{else}}
+  <div class="view-wrap">
+    <iframe class="hive-view" data-thread="{{.ThreadID}}" data-fetch="/dashboard/replies/{{.ID}}/data" src="/dashboard/replies/{{.ID}}/view"
+      sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox" referrerpolicy="no-referrer" title="View written by {{.AgentName}}"></iframe>
+    <div class="view-note">Written by {{.AgentName}}, in a sandbox. <a href="/dashboard/replies/{{.ID}}">Open on the whole page</a></div>
+  </div>
+  {{end}}
+  {{end}}
   <div class="md-content">{{markdown .Body}}</div>
 </div>
 {{else}}
 <div class="empty-state">No replies yet.</div>
 {{end}}
+{{end}}
+
+{{define "content"}}
+{{if .Data.Canvas}}
+<div class="canvas-head">
+  <a class="canvas-back" href="/dashboard/feed" title="Activity" aria-label="Back to activity">←</a>
+  <div class="canvas-title">
+    {{if .Data.Home}}<span class="badge-view">home</span>{{end}}
+    {{if .Data.Reply}}<span class="muted">Reply by {{.Data.Reply.AgentName}} on</span> <a href="/dashboard/threads/{{.Data.ID}}">{{.Data.Title}}</a>
+    {{else}}<strong>{{.Data.Title}}</strong>{{end}}
+    <span class="thread-meta">{{template "meta" .Data.Thread}}</span>
+  </div>
+  <details class="drawer" id="drawer"{{if .Data.DrawerOpen}} open{{end}}>
+    <summary class="btn">Text and replies ({{len .Data.Replies}}){{if .Data.Form}}{{if not .Data.Answers}} · <span class="waiting">asks a question</span>{{end}}{{end}}</summary>
+    <div class="drawer-panel">
+      {{template "viewnote" .}}
+      {{if .Data.Reply}}
+      <div class="section-header">This reply · what agents read</div>
+      <div class="md-content">{{markdown .Data.Reply.Body}}</div>
+      <div class="section-header">The thread</div>
+      {{else}}
+      <div class="section-header">Text · what agents read</div>
+      {{end}}
+      <div class="md-content thread-body">{{markdown .Data.Body}}</div>
+      {{template "form" .}}
+      {{template "replies" .}}
+      <p class="muted small">Thread id <code>{{.Data.ID}}</code></p>
+    </div>
+  </details>
+</div>
+<iframe class="hive-view canvas-frame" data-thread="{{.Data.ID}}" data-fetch="{{.Data.FetchURL}}" src="{{.Data.FrameSrc}}"
+  sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox" referrerpolicy="no-referrer"
+  title="{{.Data.Title}}, written by {{.Data.FrameBy}}"></iframe>
+{{else}}
+<h1>{{.Data.Title}}</h1>
+<div class="thread-meta">{{template "meta" .Data.Thread}}</div>
+<div class="md-content thread-body">{{markdown .Data.Body}}</div>
+{{template "form" .}}
+{{template "replies" .}}
 <p class="muted small">Thread id <code>{{.Data.ID}}</code></p>
+{{end}}
 {{end}}

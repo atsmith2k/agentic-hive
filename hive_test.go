@@ -142,6 +142,11 @@ func TestHive(t *testing.T) {
 		"ViewsAreSandboxedAndSelfContained":          testViewsAreSandboxedAndSelfContained,
 		"FormsCollectAnswersFromAdmins":              testFormsCollectAnswersFromAdmins,
 		"GuideTeachesRichThreads":                    testGuideTeachesRichThreads,
+		"ViewOwnsThePageAndGetsNoHouseStyle":         testViewOwnsThePageAndGetsNoHouseStyle,
+		"KitsAreSharedAndVersioned":                  testKitsAreSharedAndVersioned,
+		"ThreadDataIsSharedAndFollowed":              testThreadDataIsSharedAndFollowed,
+		"RepliesAndCardsBringTheirOwnHTML":           testRepliesAndCardsBringTheirOwnHTML,
+		"AdminHandsTheFrontPageToAThread":            testAdminHandsTheFrontPageToAThread,
 	}
 	for name, fn := range tests {
 		for _, store := range []string{"sqlite", "postgres"} {
@@ -801,7 +806,7 @@ func TestImportSQLiteIntoPostgres(t *testing.T) {
 		t.Fatalf("imported thread = %+v, %v", thread, err)
 	}
 	// The imported agent can keep working in the new store.
-	if _, err := hive.CreateReply(ctx, agent, "t1", "new reply"); err != nil {
+	if _, err := hive.CreateReply(ctx, agent, "t1", ReplyInput{Body: "new reply"}); err != nil {
 		t.Fatal(err)
 	}
 	// A second import must not pile onto existing data.

@@ -343,6 +343,36 @@ var sqliteMigrations = []string{
 		set_at DATETIME NOT NULL
 	);
 	`,
+	// 5: the playground. A thread brings its own feed card; a reply may carry
+	// a view; agents publish kits of shared code; a thread has a small data
+	// store its view reads; and settings hold what the operator handed over.
+	`
+	ALTER TABLE threads ADD COLUMN card TEXT NOT NULL DEFAULT '';
+	ALTER TABLE replies ADD COLUMN view TEXT NOT NULL DEFAULT '';
+	CREATE TABLE kits (
+		id TEXT PRIMARY KEY,
+		agent_id TEXT NOT NULL REFERENCES agents(id),
+		name TEXT NOT NULL,
+		version INTEGER NOT NULL,
+		description TEXT NOT NULL,
+		js TEXT NOT NULL,
+		css TEXT NOT NULL,
+		created_at DATETIME NOT NULL,
+		UNIQUE (agent_id, name, version)
+	);
+	CREATE TABLE thread_data (
+		thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+		name TEXT NOT NULL,
+		value TEXT NOT NULL,
+		updated_by TEXT NOT NULL,
+		updated_at DATETIME NOT NULL,
+		PRIMARY KEY (thread_id, name)
+	);
+	CREATE TABLE settings (
+		name TEXT PRIMARY KEY,
+		value TEXT NOT NULL
+	);
+	`,
 }
 
 // postgresMigrations run in order; the schema_migrations table records how
@@ -495,6 +525,36 @@ var postgresMigrations = []string{
 		status TEXT NOT NULL CHECK (status IN ('approved','blocked')),
 		set_by TEXT NOT NULL,
 		set_at TIMESTAMPTZ NOT NULL
+	);
+	`,
+	// 4 (SQLite migration 5): the playground. A thread brings its own feed card; a reply may carry
+	// a view; agents publish kits of shared code; a thread has a small data
+	// store its view reads; and settings hold what the operator handed over.
+	`
+	ALTER TABLE threads ADD COLUMN card TEXT NOT NULL DEFAULT '';
+	ALTER TABLE replies ADD COLUMN view TEXT NOT NULL DEFAULT '';
+	CREATE TABLE kits (
+		id TEXT PRIMARY KEY,
+		agent_id TEXT NOT NULL REFERENCES agents(id),
+		name TEXT NOT NULL,
+		version INTEGER NOT NULL,
+		description TEXT NOT NULL,
+		js TEXT NOT NULL,
+		css TEXT NOT NULL,
+		created_at TIMESTAMPTZ NOT NULL,
+		UNIQUE (agent_id, name, version)
+	);
+	CREATE TABLE thread_data (
+		thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+		name TEXT NOT NULL,
+		value TEXT NOT NULL,
+		updated_by TEXT NOT NULL,
+		updated_at TIMESTAMPTZ NOT NULL,
+		PRIMARY KEY (thread_id, name)
+	);
+	CREATE TABLE settings (
+		name TEXT PRIMARY KEY,
+		value TEXT NOT NULL
 	);
 	`,
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"strconv"
@@ -326,24 +327,68 @@ func (s *Server) apiRoutes(mux *http.ServeMux) {
 		return 204, nil, h.DeleteThread(ctx, a, r.PathValue("id"))
 	}))
 
-	// Replies
-	type bodyInput struct {
-		Body string `json:"body"`
-	}
-	mux.Handle("POST /api/v1/threads/{id}/replies", s.api(func(ctx context.Context, a *Agent, w http.ResponseWriter, r *http.Request) (int, any, error) {
-		var in bodyInput
+	// Thread data: named JSON values beside a thread, which its view reads.
+	mux.Handle("GET /api/v1/threads/{id}/data", s.read(func(ctx context.Context, a *Agent, w http.ResponseWriter, r *http.Request) (int, any, error) {
+		data, err := h.ThreadData(ctx, r.PathValue("id"))
+		if err == nil && a == nil {
+			for name, e := range data { // a person's address is not for readers without a key
+				if strings.Contains(e.UpdatedBy, "@") {
+					e.UpdatedBy = ""
+					data[name] = e
+				}
+			}
+		}
+		return 200, data, err
+	}))
+	mux.Handle("PUT /api/v1/threads/{id}/data/{name}", s.api(func(ctx context.Context, a *Agent, w http.ResponseWriter, r *http.Request) (int, any, error) {
+		value, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxDataValue+1))
+		if err != nil {
+			return 0, nil, errInvalid("a value may be at most %d bytes", maxDataValue)
+		}
+		entry, err := h.SetThreadData(ctx, a.Name, r.PathValue("id"), r.PathValue("name"), value)
+		return 200, entry, err
+	}))
+	mux.Handle("DELETE /api/v1/threads/{id}/data/{name}", s.api(func(ctx context.Context, a *Agent, w http.ResponseWriter, r *http.Request) (int, any, error) {
+		return 204, nil, h.DeleteThreadData(ctx, r.PathValue("id"), r.PathValue("name"))
+	}))
+
+	// Kits: code agents publish for each other's views.
+	mux.Handle("GET /api/v1/kits", s.read(func(ctx context.Context, a *Agent, w http.ResponseWriter, r *http.Request) (int, any, error) {
+		kits, err := h.ListKits(ctx)
+		return 200, kits, err
+	}))
+	mux.Handle("POST /api/v1/kits", s.api(func(ctx context.Context, a *Agent, w http.ResponseWriter, r *http.Request) (int, any, error) {
+		var in KitInput
 		if err := readJSON(w, r, &in); err != nil {
 			return 0, nil, err
 		}
-		reply, err := h.CreateReply(ctx, a, r.PathValue("id"), in.Body)
+		kit, err := h.PublishKit(ctx, a, in)
+		return 201, kit, err
+	}))
+	mux.Handle("GET /api/v1/kits/{agent}/{name}", s.read(func(ctx context.Context, a *Agent, w http.ResponseWriter, r *http.Request) (int, any, error) {
+		ref := r.PathValue("agent") + "/" + r.PathValue("name")
+		if v := r.URL.Query().Get("version"); v != "" {
+			ref += "@" + v
+		}
+		kit, err := h.GetKit(ctx, ref)
+		return 200, kit, err
+	}))
+
+	// Replies
+	mux.Handle("POST /api/v1/threads/{id}/replies", s.api(func(ctx context.Context, a *Agent, w http.ResponseWriter, r *http.Request) (int, any, error) {
+		var in ReplyInput
+		if err := readJSON(w, r, &in); err != nil {
+			return 0, nil, err
+		}
+		reply, err := h.CreateReply(ctx, a, r.PathValue("id"), in)
 		return 201, reply, err
 	}))
 	mux.Handle("PUT /api/v1/replies/{id}", s.api(func(ctx context.Context, a *Agent, w http.ResponseWriter, r *http.Request) (int, any, error) {
-		var in bodyInput
-		if err := readJSON(w, r, &in); err != nil {
+		var p ReplyPatch
+		if err := readJSON(w, r, &p); err != nil {
 			return 0, nil, err
 		}
-		reply, err := h.UpdateReply(ctx, a, r.PathValue("id"), in.Body)
+		reply, err := h.UpdateReply(ctx, a, r.PathValue("id"), p)
 		return 200, reply, err
 	}))
 	mux.Handle("DELETE /api/v1/replies/{id}", s.api(func(ctx context.Context, a *Agent, w http.ResponseWriter, r *http.Request) (int, any, error) {

@@ -250,7 +250,7 @@ func testViewsAreSandboxedAndSelfContained(t *testing.T, e *testEnv) {
 	// A person sees it in a frame whose document can reach nothing.
 	person := e.browser("reader@johnnycode.ai")
 	status, hd, page := e.do(person, "GET", "/dashboard/threads/"+thread.ID, nil)
-	if status != 200 || !strings.Contains(page, `class="hive-view"`) || !strings.Contains(page, `sandbox="allow-scripts`) || strings.Contains(page, "app.textContent") {
+	if status != 200 || !strings.Contains(page, `class="hive-view canvas-frame"`) || !strings.Contains(page, `sandbox="allow-scripts`) || strings.Contains(page, "app.textContent") {
 		t.Fatalf("thread page: status %d; want a sandboxed frame and none of the view's own markup in the page", status)
 	}
 	if csp := hd.Get("Content-Security-Policy"); !strings.Contains(csp, "script-src "+e.srv.URL+"/static/;") || !strings.Contains(csp, "frame-src 'self'") || strings.Contains(csp, "unsafe-inline") {
@@ -485,7 +485,8 @@ func testFormsCollectAnswersFromAdmins(t *testing.T, e *testEnv) {
 func testGuideTeachesRichThreads(t *testing.T, e *testEnv) {
 	srv := NewServer(e.hive.cfg, e.hive)
 	guide := srv.llmsTxt()
-	for _, want := range []string{"hive:chart", "hive:board", fence + "hive:callout", `"view": {"html"`, "hive.fetch(url)", `"form": {"title"`, "list_responses", "awaiting_response"} {
+	for _, want := range []string{"hive:chart", "hive:board", fence + "hive:callout", `"view": {"html"`, "hive.fetch(url)", `"form": {"title"`, "list_responses", "awaiting_response",
+		"no house style", "hive/base@1", "POST /api/v1/kits", "hive.data.onChange", "/data/{name}", `"card": {"html"`, "publish_kit", "set_thread_data"} {
 		if !strings.Contains(guide, want) {
 			t.Errorf("the agent guide does not mention %q", want)
 		}

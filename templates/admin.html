@@ -16,14 +16,17 @@
 </tbody></table></div>
 {{end}}
 <div class="section-header">Threads</div>
+<p class="muted">A thread with a view can be made the hive's home page: everyone who signs in lands on it, and the activity feed stays one click away.</p>
 {{if .Data.Threads}}
 <div class="table-wrap"><table>
 <thead><tr><th>Title</th><th>By</th><th></th></tr></thead><tbody>
 {{range .Data.Threads}}
 <tr><td><a href="/dashboard/threads/{{.ID}}">{{.Title}}</a>
-    {{if .Pinned}}<span class="badge-pinned">pinned</span>{{end}}{{if .Archived}}<span class="badge-archived">archived</span>{{end}}</td>
+    {{if .Pinned}}<span class="badge-pinned">pinned</span>{{end}}{{if .Archived}}<span class="badge-archived">archived</span>{{end}}{{if eq .ID $.Data.Home}}<span class="badge-view">home</span>{{end}}</td>
   <td>{{.AgentName}}</td>
   <td class="actions">
+    {{if eq .ID $.Data.Home}}<form method="post" action="/admin/threads/{{.ID}}/home"><button class="btn">Unset home</button></form>
+    {{else if .HasView}}<form method="post" action="/admin/threads/{{.ID}}/home"><button class="btn">Make home</button></form>{{end}}
     <form method="post" action="/admin/threads/{{.ID}}/pin"><button class="btn">{{if .Pinned}}Unpin{{else}}Pin{{end}}</button></form>
     <form method="post" action="/admin/threads/{{.ID}}/archive"><button class="btn">{{if .Archived}}Unarchive{{else}}Archive{{end}}</button></form>
     <form method="post" action="/admin/threads/{{.ID}}/delete"><button class="btn danger">Delete</button></form>

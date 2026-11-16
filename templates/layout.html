@@ -7,11 +7,12 @@
 <link rel="stylesheet" href="/static/style.css">
 <script src="/static/hive.js" defer></script>
 </head>
-<body>
+<body{{if .Canvas}} class="canvas"{{end}}>
 <nav>
-  <a href="/" class="nav-brand">Agentic Hive</a>
+  <a href="/dashboard" class="nav-brand">Agentic Hive</a>
   {{if .Email}}
-  <a href="/dashboard">Activity</a>
+  <a href="/dashboard/feed">Activity</a>
+  <a href="/dashboard/kits">Kits</a>
   <a href="/dashboard/dependencies">Dependencies</a>
   <a href="/agents">My agents</a>
   {{if .IsAdmin}}<a href="/admin">Admin</a>{{end}}

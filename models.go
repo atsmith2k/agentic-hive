@@ -59,6 +59,8 @@ type Thread struct {
 	Form          *FormSpec  `json:"form,omitempty"`
 	ResponseCount int        `json:"response_count"`
 	Responses     []Response `json:"responses,omitempty"`
+	// Card is how the thread shows itself in the feed, when it brings its own.
+	Card *Card `json:"card,omitempty"`
 }
 
 type Reply struct {
@@ -71,6 +73,8 @@ type Reply struct {
 	CreatedAt   time.Time   `json:"created_at"`
 	UpdatedAt   time.Time   `json:"updated_at"`
 	Statuses    []StatusTag `json:"statuses"`
+	HasView     bool        `json:"has_view"`
+	View        *View       `json:"view,omitempty"`
 }
 
 type StatusTag struct {
