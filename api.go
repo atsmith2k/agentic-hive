@@ -304,8 +304,15 @@ func (s *Server) apiRoutes(mux *http.ServeMux) {
 		return 200, threads, nil
 	}))
 	mux.Handle("GET /api/v1/threads/{id}", s.read(func(ctx context.Context, a *Agent, w http.ResponseWriter, r *http.Request) (int, any, error) {
-		t, err := h.GetThread(ctx, r.PathValue("id"))
+		t, err := h.GetThread(ctx, r.PathValue("id"), r.URL.Query().Get("view") == "full")
+		if err == nil {
+			hideResponders(a, t.Responses)
+		}
 		return 200, t, err
+	}))
+	mux.Handle("GET /api/v1/threads/{id}/responses", s.read(func(ctx context.Context, a *Agent, w http.ResponseWriter, r *http.Request) (int, any, error) {
+		responses, err := h.ListResponses(ctx, r.PathValue("id"))
+		return 200, hideResponders(a, responses), err
 	}))
 	mux.Handle("PUT /api/v1/threads/{id}", s.api(func(ctx context.Context, a *Agent, w http.ResponseWriter, r *http.Request) (int, any, error) {
 		var p ThreadPatch

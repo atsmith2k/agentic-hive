@@ -156,23 +156,23 @@ func copySQLiteInto(ctx context.Context, path string, target *DB) (counts import
 		return counts, fmt.Errorf("copy keys: %w", err)
 	}
 
-	rows, err = src.QueryContext(ctx, `SELECT id, agent_id, title, body, COALESCE(tags, '[]'), COALESCE(pinned, 0), COALESCE(archived, 0), created_at, updated_at FROM threads`)
+	rows, err = src.QueryContext(ctx, `SELECT id, agent_id, title, body, COALESCE(tags, '[]'), COALESCE(pinned, 0), COALESCE(archived, 0), view, form, created_at, updated_at FROM threads`)
 	if err != nil {
 		return counts, err
 	}
 	for rows.Next() {
-		var id, agent, title, body, tags string
+		var id, agent, title, body, tags, view, form string
 		var pinned, archived bool
 		var created, updated sql.NullTime
-		if err = rows.Scan(&id, &agent, &title, &body, &tags, &pinned, &archived, &created, &updated); err != nil {
+		if err = rows.Scan(&id, &agent, &title, &body, &tags, &pinned, &archived, &view, &form, &created, &updated); err != nil {
 			break
 		}
 		if !agents[agent] {
 			skip("thread", id, "its agent is missing")
 			continue
 		}
-		if _, err = tx.Exec(`INSERT INTO threads (id, agent_id, title, body, tags, pinned, archived, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, now()), COALESCE(?, now()))`,
-			id, agent, title, body, tags, pinned, archived, created, updated); err != nil {
+		if _, err = tx.Exec(`INSERT INTO threads (id, agent_id, title, body, tags, pinned, archived, view, form, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, now()), COALESCE(?, now()))`,
+			id, agent, title, body, tags, pinned, archived, view, form, created, updated); err != nil {
 			break
 		}
 		threads[id] = true
@@ -230,6 +230,67 @@ func copySQLiteInto(ctx context.Context, path string, target *DB) (counts import
 	}
 	if err = closeRows(rows, err); err != nil {
 		return counts, fmt.Errorf("copy status tags: %w", err)
+	}
+
+	// Rich threads: answers to forms, the libraries and images views use,
+	// and the operator's rulings on live-data hosts.
+	rows, err = src.QueryContext(ctx, `SELECT id, thread_id, responder, data, created_at FROM responses`)
+	if err != nil {
+		return counts, err
+	}
+	for rows.Next() {
+		var id, thread, responder, data string
+		var created sql.NullTime
+		if err = rows.Scan(&id, &thread, &responder, &data, &created); err != nil {
+			break
+		}
+		if !threads[thread] {
+			skip("response", id, "its thread is missing")
+			continue
+		}
+		if _, err = tx.Exec(`INSERT INTO responses (id, thread_id, responder, data, created_at) VALUES (?, ?, ?, ?, COALESCE(?, now()))`,
+			id, thread, responder, data, created); err != nil {
+			break
+		}
+	}
+	if err = closeRows(rows, err); err != nil {
+		return counts, fmt.Errorf("copy responses: %w", err)
+	}
+	rows, err = src.QueryContext(ctx, `SELECT hash, kind, source, content_type, body, created_at FROM assets`)
+	if err != nil {
+		return counts, err
+	}
+	for rows.Next() {
+		var hash, kind, source, ctype string
+		var body []byte
+		var created sql.NullTime
+		if err = rows.Scan(&hash, &kind, &source, &ctype, &body, &created); err != nil {
+			break
+		}
+		if _, err = tx.Exec(`INSERT INTO assets (hash, kind, source, content_type, body, created_at) VALUES (?, ?, ?, ?, ?, COALESCE(?, now()))`,
+			hash, kind, source, ctype, body, created); err != nil {
+			break
+		}
+	}
+	if err = closeRows(rows, err); err != nil {
+		return counts, fmt.Errorf("copy assets: %w", err)
+	}
+	rows, err = src.QueryContext(ctx, `SELECT host, status, set_by, set_at FROM data_hosts`)
+	if err != nil {
+		return counts, err
+	}
+	for rows.Next() {
+		var host, status, by string
+		var at sql.NullTime
+		if err = rows.Scan(&host, &status, &by, &at); err != nil {
+			break
+		}
+		if _, err = tx.Exec(`INSERT INTO data_hosts (host, status, set_by, set_at) VALUES (?, ?, ?, COALESCE(?, now()))`, host, status, by, at); err != nil {
+			break
+		}
+	}
+	if err = closeRows(rows, err); err != nil {
+		return counts, fmt.Errorf("copy data hosts: %w", err)
 	}
 
 	rows, err = src.QueryContext(ctx, `SELECT id, title, body, COALESCE(active, 1), created_at FROM announcements`)

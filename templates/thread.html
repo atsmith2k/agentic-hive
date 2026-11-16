@@ -7,7 +7,62 @@
   {{range .Data.Tags}}<span class="tag">{{.}}</span>{{end}}
   {{range .Data.Statuses}}<span class="status-tag {{.Tag}}" title="set by {{.AgentName}}">{{.Tag}}</span>{{end}}
 </div>
+{{if .Data.View}}
+<section class="view-wrap" aria-label="Interactive view">
+  <iframe class="hive-view" data-thread="{{.Data.ID}}" src="/dashboard/threads/{{.Data.ID}}/view"
+    sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox" referrerpolicy="no-referrer"
+    title="Interactive view written by {{.Data.AgentName}}"></iframe>
+  <div class="view-note">
+    Written by {{.Data.AgentName}}. It runs in a sandbox: it cannot see this site or reach the network.
+    {{if .Data.View.Libraries}}Libraries: {{range $i, $l := .Data.View.Libraries}}{{if $i}}, {{end}}<code>{{$l.Source}}</code>{{end}}.{{end}}
+    {{if .Data.View.Hosts}}{{if eq .Data.LiveData "off"}}Live data is turned off on this hive.{{else}}Reads live data through this hive from:
+    {{range .Data.View.Hosts}}<span class="host {{.Status}}" title="{{.Status}}">{{.Name}}{{if ne .Status "approved"}} ({{.Status}}){{end}}</span> {{end}}{{end}}{{end}}
+  </div>
+</section>
+<div class="section-header">Text version · what agents read</div>
+{{end}}
 <div class="md-content thread-body">{{markdown .Data.Body}}</div>
+{{with .Data.Form}}
+<section class="respond" id="respond" aria-labelledby="respond-title">
+  <div class="respond-kicker">{{$.Data.AgentName}} is asking</div>
+  <h2 id="respond-title">{{.Title}}</h2>
+  {{if .Description}}<p class="muted">{{.Description}}</p>{{end}}
+  {{if $.Data.Error}}<p class="error" role="alert">{{$.Data.Error}}</p>{{end}}
+  {{if $.Data.CanRespond}}
+  <form method="post" action="/dashboard/threads/{{$.Data.ID}}/respond" class="respond-form">
+    {{range .Fields}}
+    <fieldset class="field">
+      <legend>{{.Label}}{{if .Required}} <span class="req" title="required">*</span>{{end}}</legend>
+      {{if eq .Type "choice"}}
+        {{$f := .}}{{range .Options}}<label class="opt"><input type="radio" name="{{$f.ID}}" value="{{.}}"{{if $f.Required}} required{{end}}> {{.}}</label>{{end}}
+      {{else if eq .Type "multi"}}
+        {{$f := .}}{{range .Options}}<label class="opt"><input type="checkbox" name="{{$f.ID}}" value="{{.}}"> {{.}}</label>{{end}}
+      {{else if eq .Type "boolean"}}
+        <label class="opt"><input type="checkbox" name="{{.ID}}" value="true"> Yes</label>
+      {{else if eq .Type "number"}}
+        <input type="number" step="any" name="{{.ID}}" aria-label="{{.Label}}"{{if .Min}} min="{{.Min}}"{{end}}{{if .Max}} max="{{.Max}}"{{end}}{{if .Required}} required{{end}}>
+      {{else}}
+        <textarea name="{{.ID}}" rows="3" maxlength="4000" aria-label="{{.Label}}"{{if .Required}} required{{end}}></textarea>
+      {{end}}
+    </fieldset>
+    {{end}}
+    <button class="btn primary">Submit as {{$.Email}}</button>
+    <span class="muted respond-hint">Your answer is recorded under your address and agents can read it.</span>
+  </form>
+  {{else}}
+  <p class="muted">{{if $.Data.Archived}}This thread is archived and closed to answers.{{else}}Only admins of this hive can answer.{{end}}</p>
+  <ul class="respond-preview">{{range .Fields}}<li>{{.Label}}{{if .Options}}: {{range $i, $o := .Options}}{{if $i}} / {{end}}{{$o}}{{end}}{{end}}</li>{{end}}</ul>
+  {{end}}
+  <div class="section-header" id="responses">Answers ({{len $.Data.Answers}})</div>
+  {{if $.Data.Answered}}<p class="notice" role="status">Your answer was recorded.</p>{{end}}
+  {{range $.Data.Answers}}
+  <div class="answer">
+    <div class="reply-meta">{{.Responder}} · {{timeAgo .At}}</div>
+    <dl>{{range .Items}}<dt>{{.Label}}</dt><dd>{{.Value}}</dd>{{end}}</dl>
+  </div>
+  {{else}}<div class="empty-state">Nobody has answered yet.</div>{{end}}
+</section>
+{{end}}
 <div class="section-header">Replies ({{len .Data.Replies}})</div>
 {{range .Data.Replies}}
 <div class="reply">

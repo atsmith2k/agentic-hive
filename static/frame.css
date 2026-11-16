@@ -1,0 +1,35 @@
+/* Base styles for a view's frame, so an agent's HTML matches the hive
+   without carrying its own theme. Everything here can be overridden. */
+:root {
+  --bg: #1a1a2e; --bg-surface: #16213e; --bg-card: #1c2541; --text: #e0e0e0; --text-muted: #8892a4;
+  --accent: #7b8cde; --accent-hover: #9aa6e8; --border: #2a2f4a;
+  --green: #4ade80; --red: #f87171; --yellow: #fbbf24; --blue: #60a5fa; --gray: #6b7280;
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "SF Mono", "Cascadia Code", "Fira Code", Menlo, Consolas, monospace;
+  color-scheme: dark;
+}
+*, *::before, *::after { box-sizing: border-box; }
+html { font-size: 15px; }
+body { margin: 0; padding: 14px; background: var(--bg-card); color: var(--text); font-family: var(--font); line-height: 1.55; overflow-wrap: anywhere; }
+h1, h2, h3, h4 { line-height: 1.25; margin: 0 0 0.5em; font-weight: 650; }
+h1 { font-size: 1.45rem; } h2 { font-size: 1.2rem; } h3 { font-size: 1.02rem; } h4 { font-size: 0.9rem; color: var(--text-muted); }
+p { margin: 0 0 0.75em; }
+a { color: var(--accent); } a:hover { color: var(--accent-hover); }
+small, .muted { color: var(--text-muted); }
+code, pre { font-family: var(--font-mono); font-size: 0.88em; }
+pre { background: var(--bg-surface); border: 1px solid var(--border); border-radius: 6px; padding: 10px; overflow-x: auto; }
+img, svg, canvas, video { max-width: 100%; }
+table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
+th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); }
+th { color: var(--text-muted); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; }
+button, select, input, textarea {
+  font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px;
+}
+button { cursor: pointer; background: rgba(123, 140, 222, 0.16); border-color: rgba(123, 140, 222, 0.45); color: var(--accent-hover); }
+button:hover { background: rgba(123, 140, 222, 0.3); }
+button[aria-pressed="true"], button.active { background: var(--accent); color: #10142a; border-color: var(--accent); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.card { background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
+.grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.pill { display: inline-block; font-size: 0.72rem; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--text-muted); }

@@ -30,6 +30,7 @@ type Hive struct {
 	log    *log.Logger
 	now    func() time.Time
 	limits *limiter
+	fetch  *fetcher
 
 	legacyMu sync.Mutex
 	legacy   map[string]string // digest of a verified legacy key -> agent id
@@ -37,7 +38,7 @@ type Hive struct {
 
 func NewHive(db *DB, cfg Config, mail Mailer, logger *log.Logger) *Hive {
 	now := func() time.Time { return time.Now().UTC() }
-	return &Hive{db: db, cfg: cfg, mail: mail, log: logger, now: now, limits: newLimiter(now), legacy: map[string]string{}}
+	return &Hive{db: db, cfg: cfg, mail: mail, log: logger, now: now, limits: newLimiter(now), fetch: newFetcher(now), legacy: map[string]string{}}
 }
 
 func (h *Hive) internal(what string, err error) *Error {
@@ -98,14 +99,16 @@ func cleanTags(tags []string) ([]string, *Error) {
 // ---- Threads ----
 
 const threadSelect = `SELECT t.id, t.agent_id, a.name, t.title, t.body, t.tags, t.pinned, t.archived,
-	t.created_at, t.updated_at, (SELECT COUNT(*) FROM replies r WHERE r.thread_id = t.id)
+	t.created_at, t.updated_at, (SELECT COUNT(*) FROM replies r WHERE r.thread_id = t.id),
+	(t.view <> ''), t.form, (SELECT COUNT(*) FROM responses p WHERE p.thread_id = t.id)
 	FROM threads t JOIN agents a ON t.agent_id = a.id `
 
 func scanThread(row interface{ Scan(...any) error }) (Thread, error) {
 	var t Thread
-	var tags string
+	var tags, form string
 	err := row.Scan(&t.ID, &t.AgentID, &t.AgentName, &t.Title, &t.Body, &tags, &t.Pinned, &t.Archived,
-		&t.CreatedAt, &t.UpdatedAt, &t.ReplyCount)
+		&t.CreatedAt, &t.UpdatedAt, &t.ReplyCount, &t.HasView, &form, &t.ResponseCount)
+	t.Form = parseForm(form)
 	if json.Unmarshal([]byte(tags), &t.Tags) != nil || t.Tags == nil {
 		t.Tags = []string{}
 	}
@@ -152,9 +155,20 @@ func (h *Hive) queryThreads(ctx context.Context, query string, args ...any) ([]T
 }
 
 type ThreadInput struct {
-	Title string   `json:"title"`
-	Body  string   `json:"body"`
-	Tags  []string `json:"tags"`
+	Title string     `json:"title"`
+	Body  string     `json:"body"`
+	Tags  []string   `json:"tags"`
+	View  *ViewInput `json:"view"`
+	Form  *FormSpec  `json:"form"`
+}
+
+// cleanBody is cleanText for a Markdown body, which may hold hive: blocks.
+func cleanBody(raw string) (string, *Error) {
+	body, e := cleanText("body", raw, maxBodyLen)
+	if e != nil {
+		return "", e
+	}
+	return body, validateBlocks(body)
 }
 
 func (h *Hive) CreateThread(ctx context.Context, actor *Agent, in ThreadInput) (*Thread, error) {
@@ -162,7 +176,7 @@ func (h *Hive) CreateThread(ctx context.Context, actor *Agent, in ThreadInput) (
 	if e != nil {
 		return nil, e
 	}
-	body, e := cleanText("body", in.Body, maxBodyLen)
+	body, e := cleanBody(in.Body)
 	if e != nil {
 		return nil, e
 	}
@@ -170,11 +184,22 @@ func (h *Hive) CreateThread(ctx context.Context, actor *Agent, in ThreadInput) (
 	if e != nil {
 		return nil, e
 	}
+	var view, form string
+	if in.Form != nil {
+		if form, e = cleanForm(in.Form); e != nil {
+			return nil, e
+		}
+	}
+	if in.View != nil { // last: it is the step that reaches the network
+		if view, e = h.prepareView(ctx, in.View); e != nil {
+			return nil, e
+		}
+	}
 	tagsJSON, _ := json.Marshal(tags)
 	id, now := uuid.NewString(), h.now()
 	if _, err := h.db.ExecContext(ctx,
-		`INSERT INTO threads (id, agent_id, title, body, tags, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		id, actor.ID, title, body, string(tagsJSON), now, now); err != nil {
+		`INSERT INTO threads (id, agent_id, title, body, tags, view, form, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, actor.ID, title, body, string(tagsJSON), view, form, now, now); err != nil {
 		return nil, h.internal("create thread", err)
 	}
 	return h.threadSummary(ctx, id)
@@ -254,11 +279,23 @@ func (h *Hive) ListThreads(ctx context.Context, f ThreadFilter) ([]Thread, int, 
 	return threads, total, err
 }
 
-// GetThread returns a thread with its replies and every status tag.
-func (h *Hive) GetThread(ctx context.Context, id string) (*Thread, error) {
+// GetThread returns a thread with its replies, every status tag, the
+// answers to its form and its view. The view's HTML is large and of little
+// use to an agent reading, so it comes only when viewHTML is set.
+func (h *Hive) GetThread(ctx context.Context, id string, viewHTML bool) (*Thread, error) {
 	t, err := h.threadSummary(ctx, id)
 	if err != nil {
 		return nil, err
+	}
+	if t.HasView {
+		if t.View, err = h.ThreadView(ctx, id, viewHTML); err != nil {
+			return nil, err
+		}
+	}
+	if t.Form != nil {
+		if t.Responses, err = h.ListResponses(ctx, id); err != nil {
+			return nil, err
+		}
 	}
 	rows, err := h.db.QueryContext(ctx,
 		`SELECT r.id, r.thread_id, r.agent_id, a.name, r.body, r.created_at, r.updated_at
@@ -292,10 +329,14 @@ func (h *Hive) GetThread(ctx context.Context, id string) (*Thread, error) {
 	return t, nil
 }
 
+// ThreadPatch changes the fields it names. view and form are replaced
+// whole, and an explicit null removes them.
 type ThreadPatch struct {
-	Title *string   `json:"title"`
-	Body  *string   `json:"body"`
-	Tags  *[]string `json:"tags"`
+	Title *string         `json:"title"`
+	Body  *string         `json:"body"`
+	Tags  *[]string       `json:"tags"`
+	View  json.RawMessage `json:"view"`
+	Form  json.RawMessage `json:"form"`
 }
 
 func (h *Hive) UpdateThread(ctx context.Context, actor *Agent, id string, p ThreadPatch) (*Thread, error) {
@@ -312,11 +353,39 @@ func (h *Hive) UpdateThread(ctx context.Context, actor *Agent, id string, p Thre
 		sets, args = append(sets, "title = ?"), append(args, v)
 	}
 	if p.Body != nil {
-		v, e := cleanText("body", *p.Body, maxBodyLen)
+		v, e := cleanBody(*p.Body)
 		if e != nil {
 			return nil, e
 		}
 		sets, args = append(sets, "body = ?"), append(args, v)
+	}
+	if len(p.Form) > 0 {
+		v := ""
+		if string(p.Form) != "null" {
+			var f FormSpec
+			if json.Unmarshal(p.Form, &f) != nil {
+				return nil, errInvalid("form must be an object with title and fields, or null to remove it")
+			}
+			var e *Error
+			if v, e = cleanForm(&f); e != nil {
+				return nil, e
+			}
+		}
+		sets, args = append(sets, "form = ?"), append(args, v)
+	}
+	if len(p.View) > 0 {
+		v := ""
+		if string(p.View) != "null" {
+			var in ViewInput
+			if json.Unmarshal(p.View, &in) != nil {
+				return nil, errInvalid("view must be an object with html, or null to remove it")
+			}
+			var e *Error
+			if v, e = h.prepareView(ctx, &in); e != nil {
+				return nil, e
+			}
+		}
+		sets, args = append(sets, "view = ?"), append(args, v)
 	}
 	if p.Tags != nil {
 		v, e := cleanTags(*p.Tags)
@@ -327,7 +396,7 @@ func (h *Hive) UpdateThread(ctx context.Context, actor *Agent, id string, p Thre
 		sets, args = append(sets, "tags = ?"), append(args, string(j))
 	}
 	if len(sets) == 0 {
-		return nil, errInvalid("nothing to update: send title, body or tags")
+		return nil, errInvalid("nothing to update: send title, body, tags, view or form")
 	}
 	sets, args = append(sets, "updated_at = ?"), append(args, h.now(), id)
 	if _, err := h.db.ExecContext(ctx, `UPDATE threads SET `+strings.Join(sets, ", ")+` WHERE id = ?`, args...); err != nil {
@@ -354,6 +423,7 @@ func (h *Hive) deleteThread(ctx context.Context, id string) error {
 	for _, q := range []string{
 		`DELETE FROM status_tags WHERE thread_id = ?1 OR reply_id IN (SELECT id FROM replies WHERE thread_id = ?1)`,
 		`DELETE FROM replies WHERE thread_id = ?1`,
+		`DELETE FROM responses WHERE thread_id = ?1`,
 		`DELETE FROM threads WHERE id = ?1`,
 	} {
 		if _, err := tx.Exec(q, id); err != nil {
@@ -401,7 +471,7 @@ func (h *Hive) getReply(ctx context.Context, id string) (*Reply, error) {
 }
 
 func (h *Hive) CreateReply(ctx context.Context, actor *Agent, threadID, rawBody string) (*Reply, error) {
-	body, e := cleanText("body", rawBody, maxBodyLen)
+	body, e := cleanBody(rawBody)
 	if e != nil {
 		return nil, e
 	}
@@ -430,7 +500,7 @@ func (h *Hive) UpdateReply(ctx context.Context, actor *Agent, id, rawBody string
 	if err := h.requireOwner(ctx, actor, "replies", "reply", id); err != nil {
 		return nil, err
 	}
-	body, e := cleanText("body", rawBody, maxBodyLen)
+	body, e := cleanBody(rawBody)
 	if e != nil {
 		return nil, e
 	}
@@ -617,7 +687,9 @@ type ActiveContext struct {
 	InProgress    []Thread       `json:"in_progress"`
 	NeedsReview   []Thread       `json:"needs_review"`
 	Blocked       []Thread       `json:"blocked"`
-	RecentThreads []Thread       `json:"recent_threads"`
+	// AwaitingResponse: threads whose form nobody has answered yet.
+	AwaitingResponse []Thread `json:"awaiting_response"`
+	RecentThreads    []Thread `json:"recent_threads"`
 }
 
 // ActiveContext is the one call an agent makes to learn what is going on.
@@ -639,6 +711,10 @@ func (h *Hive) ActiveContext(ctx context.Context) (*ActiveContext, error) {
 		return nil, err
 	}
 	if c.Blocked, err = byStatus("blocked"); err != nil {
+		return nil, err
+	}
+	if c.AwaitingResponse, err = h.queryThreads(ctx, threadSelect+`WHERE NOT t.archived AND t.form <> '' AND NOT EXISTS
+		(SELECT 1 FROM responses p WHERE p.thread_id = t.id) ORDER BY t.updated_at DESC LIMIT 50`); err != nil {
 		return nil, err
 	}
 	if c.RecentThreads, err = h.queryThreads(ctx, threadSelect+`ORDER BY t.updated_at DESC LIMIT 20`); err != nil {

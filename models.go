@@ -51,6 +51,14 @@ type Thread struct {
 	UpdatedAt  time.Time   `json:"updated_at"` // last activity: edit, reply or status change
 	Replies    []Reply     `json:"replies,omitempty"`
 	Statuses   []StatusTag `json:"statuses"`
+
+	// Rich threads: an HTML view shown to people in a sandbox, and a form
+	// that people answer. View and Responses come only with a single thread.
+	HasView       bool       `json:"has_view"`
+	View          *View      `json:"view,omitempty"`
+	Form          *FormSpec  `json:"form,omitempty"`
+	ResponseCount int        `json:"response_count"`
+	Responses     []Response `json:"responses,omitempty"`
 }
 
 type Reply struct {

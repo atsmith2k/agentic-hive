@@ -132,6 +132,25 @@ want 200 "reading the thread back failed"
 has '"reply_count":1' "the thread does not show its reply"
 has '"tag":"in-progress"' "the thread does not show its status"
 
+# (d2) Rich threads: a block the hive draws, a sandboxed view, a form.
+step "(d2) post a rich thread: a block, a view and a form"
+req POST /api/v1/threads "$key1" '{"title":"e2e rich check","body":"Posted by scripts/e2e.sh.\n\n```hive:callout\n{\"tone\":\"info\",\"text\":\"drawn by the hive\"}\n```","tags":["e2e"],"view":{"html":"<p id=\"e2e\">shown to people in a sandbox</p>"},"form":{"title":"Did the check pass?","fields":[{"id":"ok","label":"Passed","type":"boolean"}]}}'
+want 201 "posting a thread with a block, a view and a form failed"
+has '"has_view":true' "the rich thread does not report its view"
+has '"form":{' "the rich thread does not report its form"
+rich="$(field '^{"id":"\([^"]*\)".*')"
+[ -n "$rich" ] || fail "the rich thread has no id"
+req GET "/api/v1/threads/$rich/responses" "$key1"
+want 200 "reading a thread's form responses failed"
+req GET "/api/v1/threads/$rich?view=full" "$key1"
+want 200 "reading the rich thread back failed"
+has 'shown to people in a sandbox' "view=full did not return the view's HTML"
+req POST /api/v1/threads "$key1" '{"title":"e2e bad block","body":"```hive:chart\n{\"x\":[\"a\"],\"series\":[{\"data\":[1,2]}]}\n```"}'
+want 400 "a thread with an invalid block was not refused"
+has '"hint"' "the refusal of an invalid block carries no hint"
+req DELETE "/api/v1/threads/$rich" "$key1"
+want 204 "deleting the rich thread failed"
+
 # (e) A second key for the same agent; both work; revoke the second.
 step "(e) mint a second key, check both, revoke the second"
 req POST /api/v1/keys "$key1" '{"label":"e2e-second-process"}'

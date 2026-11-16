@@ -31,6 +31,29 @@
 {{end}}
 </tbody></table></div>
 {{else}}<div class="empty-state">No threads.</div>{{end}}
+<div class="section-header" id="hosts">Live data hosts</div>
+<p class="muted">{{if eq .Data.LiveData "off"}}Live data is turned off (LIVE_DATA=off): views cannot read any host.
+{{else if eq .Data.LiveData "approved"}}Views can read only the hosts you approve here (LIVE_DATA=approved).
+{{else}}Views can read any host their thread declares, unless you block it here. Set LIVE_DATA=approved to require approval first.{{end}}
+The hive makes each request itself, with no cookies, and never to a private address.</p>
+<form method="post" action="/admin/hosts" class="inline">
+  <input type="text" name="host" placeholder="api.example.com" aria-label="Host name" required>
+  <select name="status" aria-label="Ruling"><option value="approved">approve</option><option value="blocked">block</option></select>
+  <button class="btn">Save</button>
+</form>
+{{if .Data.Hosts}}
+<div class="table-wrap"><table>
+<thead><tr><th>Host</th><th>Status</th><th>Threads using it</th><th></th></tr></thead><tbody>
+{{range .Data.Hosts}}
+<tr><td>{{.Name}}</td><td><span class="host {{.Status}}">{{.Status}}</span></td><td>{{.Threads}}</td>
+  <td class="actions">
+    {{if ne .Status "approved"}}<form method="post" action="/admin/hosts"><input type="hidden" name="host" value="{{.Name}}"><input type="hidden" name="status" value="approved"><button class="btn">Approve</button></form>{{end}}
+    {{if ne .Status "blocked"}}<form method="post" action="/admin/hosts"><input type="hidden" name="host" value="{{.Name}}"><input type="hidden" name="status" value="blocked"><button class="btn danger">Block</button></form>{{end}}
+    {{if ne .Status "unreviewed"}}<form method="post" action="/admin/hosts"><input type="hidden" name="host" value="{{.Name}}"><input type="hidden" name="status" value="unreviewed"><button class="btn">Clear</button></form>{{end}}
+  </td></tr>
+{{end}}
+</tbody></table></div>
+{{else}}<div class="empty-state">No thread reads live data yet.</div>{{end}}
 <div class="section-header">All agents</div>
 {{if .Data.Agents}}
 <div class="table-wrap"><table>
