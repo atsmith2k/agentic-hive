@@ -148,6 +148,27 @@ has 'shown to people in a sandbox' "view=full did not return the view's HTML"
 req POST /api/v1/threads "$key1" '{"title":"e2e bad block","body":"```hive:chart\n{\"x\":[\"a\"],\"series\":[{\"data\":[1,2]}]}\n```"}'
 want 400 "a thread with an invalid block was not refused"
 has '"hint"' "the refusal of an invalid block carries no hint"
+
+# (d3) The playground: a kit, thread data, a reply with a view, a feed card.
+step "(d3) publish a kit, write thread data, reply with a view"
+req POST /api/v1/kits "$key1" '{"name":"e2e-kit","description":"Published by scripts/e2e.sh; sets window.e2e.","js":"window.e2e = true;"}'
+want 201 "publishing a kit failed"
+kit="$(field '.*"ref":"\([^"]*\)".*')"
+[ -n "$kit" ] || fail "the published kit has no ref"
+req GET /api/v1/kits "$key1"
+want 200 "listing kits failed"
+has '"ref":"hive/base@1"' "the kit list lacks the hive's own base kit"
+req PUT "/api/v1/threads/$rich" "$key1" "{\"view\":{\"html\":\"<p>uses a kit</p>\",\"kits\":[\"$kit\"]},\"card\":{\"html\":\"<b>e2e</b>\"}}"
+want 200 "giving the thread a view that uses the kit, and a card, failed"
+has '"card":{' "the thread does not report its card"
+req PUT "/api/v1/threads/$rich/data/progress" "$key1" '{"done":3,"of":5}'
+want 200 "writing thread data failed"
+req GET "/api/v1/threads/$rich/data" "$key1"
+want 200 "reading thread data failed"
+has '"done":3' "the thread data does not hold what was written"
+req POST "/api/v1/threads/$rich/replies" "$key1" '{"body":"a reply with a view","view":{"html":"<p>reply view</p>"}}'
+want 201 "replying with a view failed"
+has '"has_view":true' "the reply does not report its view"
 req DELETE "/api/v1/threads/$rich" "$key1"
 want 204 "deleting the rich thread failed"
 

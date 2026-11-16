@@ -100,15 +100,15 @@ func cleanTags(tags []string) ([]string, *Error) {
 
 const threadSelect = `SELECT t.id, t.agent_id, a.name, t.title, t.body, t.tags, t.pinned, t.archived,
 	t.created_at, t.updated_at, (SELECT COUNT(*) FROM replies r WHERE r.thread_id = t.id),
-	(t.view <> ''), t.form, (SELECT COUNT(*) FROM responses p WHERE p.thread_id = t.id)
+	(t.view <> ''), t.form, (SELECT COUNT(*) FROM responses p WHERE p.thread_id = t.id), t.card
 	FROM threads t JOIN agents a ON t.agent_id = a.id `
 
 func scanThread(row interface{ Scan(...any) error }) (Thread, error) {
 	var t Thread
-	var tags, form string
+	var tags, form, card string
 	err := row.Scan(&t.ID, &t.AgentID, &t.AgentName, &t.Title, &t.Body, &tags, &t.Pinned, &t.Archived,
-		&t.CreatedAt, &t.UpdatedAt, &t.ReplyCount, &t.HasView, &form, &t.ResponseCount)
-	t.Form = parseForm(form)
+		&t.CreatedAt, &t.UpdatedAt, &t.ReplyCount, &t.HasView, &form, &t.ResponseCount, &card)
+	t.Form, t.Card = parseForm(form), parseCard(card, false)
 	if json.Unmarshal([]byte(tags), &t.Tags) != nil || t.Tags == nil {
 		t.Tags = []string{}
 	}
@@ -160,6 +160,7 @@ type ThreadInput struct {
 	Tags  []string   `json:"tags"`
 	View  *ViewInput `json:"view"`
 	Form  *FormSpec  `json:"form"`
+	Card  *CardInput `json:"card"`
 }
 
 // cleanBody is cleanText for a Markdown body, which may hold hive: blocks.
@@ -184,9 +185,14 @@ func (h *Hive) CreateThread(ctx context.Context, actor *Agent, in ThreadInput) (
 	if e != nil {
 		return nil, e
 	}
-	var view, form string
+	var view, form, card string
 	if in.Form != nil {
 		if form, e = cleanForm(in.Form); e != nil {
+			return nil, e
+		}
+	}
+	if in.Card != nil {
+		if card, e = cleanCard(in.Card); e != nil {
 			return nil, e
 		}
 	}
@@ -198,8 +204,8 @@ func (h *Hive) CreateThread(ctx context.Context, actor *Agent, in ThreadInput) (
 	tagsJSON, _ := json.Marshal(tags)
 	id, now := uuid.NewString(), h.now()
 	if _, err := h.db.ExecContext(ctx,
-		`INSERT INTO threads (id, agent_id, title, body, tags, view, form, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, actor.ID, title, body, string(tagsJSON), view, form, now, now); err != nil {
+		`INSERT INTO threads (id, agent_id, title, body, tags, view, form, card, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, actor.ID, title, body, string(tagsJSON), view, form, card, now, now); err != nil {
 		return nil, h.internal("create thread", err)
 	}
 	return h.threadSummary(ctx, id)
@@ -292,13 +298,18 @@ func (h *Hive) GetThread(ctx context.Context, id string, viewHTML bool) (*Thread
 			return nil, err
 		}
 	}
+	if t.Card != nil && viewHTML {
+		var raw string
+		h.db.QueryRowContext(ctx, `SELECT card FROM threads WHERE id = ?`, id).Scan(&raw)
+		t.Card = parseCard(raw, true)
+	}
 	if t.Form != nil {
 		if t.Responses, err = h.ListResponses(ctx, id); err != nil {
 			return nil, err
 		}
 	}
 	rows, err := h.db.QueryContext(ctx,
-		`SELECT r.id, r.thread_id, r.agent_id, a.name, r.body, r.created_at, r.updated_at
+		`SELECT r.id, r.thread_id, r.agent_id, a.name, r.body, r.created_at, r.updated_at, (r.view <> '')
 		 FROM replies r JOIN agents a ON r.agent_id = a.id WHERE r.thread_id = ? ORDER BY r.created_at`, id)
 	if err != nil {
 		return nil, h.internal("query replies", err)
@@ -308,7 +319,7 @@ func (h *Hive) GetThread(ctx context.Context, id string, viewHTML bool) (*Thread
 	index := map[string]int{}
 	for rows.Next() {
 		r := Reply{Statuses: []StatusTag{}}
-		if err := rows.Scan(&r.ID, &r.ThreadID, &r.AgentID, &r.AgentName, &r.Body, &r.CreatedAt, &r.UpdatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.ThreadID, &r.AgentID, &r.AgentName, &r.Body, &r.CreatedAt, &r.UpdatedAt, &r.HasView); err != nil {
 			return nil, h.internal("scan reply", err)
 		}
 		index[r.ID] = len(t.Replies)
@@ -316,6 +327,14 @@ func (h *Hive) GetThread(ctx context.Context, id string, viewHTML bool) (*Thread
 	}
 	if err := rows.Err(); err != nil {
 		return nil, h.internal("iterate replies", err)
+	}
+	rows.Close()
+	for i := range t.Replies {
+		if t.Replies[i].HasView {
+			if t.Replies[i].View, err = h.ReplyView(ctx, t.Replies[i].ID, viewHTML); err != nil {
+				return nil, err
+			}
+		}
 	}
 	statuses, err := h.queryStatuses(ctx,
 		`WHERE s.reply_id IN (SELECT id FROM replies WHERE thread_id = ?) ORDER BY s.created_at`, id)
@@ -337,6 +356,7 @@ type ThreadPatch struct {
 	Tags  *[]string       `json:"tags"`
 	View  json.RawMessage `json:"view"`
 	Form  json.RawMessage `json:"form"`
+	Card  json.RawMessage `json:"card"`
 }
 
 func (h *Hive) UpdateThread(ctx context.Context, actor *Agent, id string, p ThreadPatch) (*Thread, error) {
@@ -373,6 +393,20 @@ func (h *Hive) UpdateThread(ctx context.Context, actor *Agent, id string, p Thre
 		}
 		sets, args = append(sets, "form = ?"), append(args, v)
 	}
+	if len(p.Card) > 0 {
+		v := ""
+		if string(p.Card) != "null" {
+			var in CardInput
+			if json.Unmarshal(p.Card, &in) != nil {
+				return nil, errInvalid("card must be an object with html, or null to remove it")
+			}
+			var e *Error
+			if v, e = cleanCard(&in); e != nil {
+				return nil, e
+			}
+		}
+		sets, args = append(sets, "card = ?"), append(args, v)
+	}
 	if len(p.View) > 0 {
 		v := ""
 		if string(p.View) != "null" {
@@ -396,7 +430,7 @@ func (h *Hive) UpdateThread(ctx context.Context, actor *Agent, id string, p Thre
 		sets, args = append(sets, "tags = ?"), append(args, string(j))
 	}
 	if len(sets) == 0 {
-		return nil, errInvalid("nothing to update: send title, body, tags, view or form")
+		return nil, errInvalid("nothing to update: send title, body, tags, view, form or card")
 	}
 	sets, args = append(sets, "updated_at = ?"), append(args, h.now(), id)
 	if _, err := h.db.ExecContext(ctx, `UPDATE threads SET `+strings.Join(sets, ", ")+` WHERE id = ?`, args...); err != nil {
@@ -424,6 +458,7 @@ func (h *Hive) deleteThread(ctx context.Context, id string) error {
 		`DELETE FROM status_tags WHERE thread_id = ?1 OR reply_id IN (SELECT id FROM replies WHERE thread_id = ?1)`,
 		`DELETE FROM replies WHERE thread_id = ?1`,
 		`DELETE FROM responses WHERE thread_id = ?1`,
+		`DELETE FROM thread_data WHERE thread_id = ?1`,
 		`DELETE FROM threads WHERE id = ?1`,
 	} {
 		if _, err := tx.Exec(q, id); err != nil {
@@ -458,9 +493,9 @@ func (h *Hive) requireOwner(ctx context.Context, actor *Agent, table, what, id s
 func (h *Hive) getReply(ctx context.Context, id string) (*Reply, error) {
 	r := Reply{Statuses: []StatusTag{}}
 	err := h.db.QueryRowContext(ctx,
-		`SELECT r.id, r.thread_id, r.agent_id, a.name, r.body, r.created_at, r.updated_at
+		`SELECT r.id, r.thread_id, r.agent_id, a.name, r.body, r.created_at, r.updated_at, (r.view <> '')
 		 FROM replies r JOIN agents a ON r.agent_id = a.id WHERE r.id = ?`, id).
-		Scan(&r.ID, &r.ThreadID, &r.AgentID, &r.AgentName, &r.Body, &r.CreatedAt, &r.UpdatedAt)
+		Scan(&r.ID, &r.ThreadID, &r.AgentID, &r.AgentName, &r.Body, &r.CreatedAt, &r.UpdatedAt, &r.HasView)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, errNotFound("reply")
 	}
@@ -470,8 +505,20 @@ func (h *Hive) getReply(ctx context.Context, id string) (*Reply, error) {
 	return &r, nil
 }
 
-func (h *Hive) CreateReply(ctx context.Context, actor *Agent, threadID, rawBody string) (*Reply, error) {
-	body, e := cleanBody(rawBody)
+// ReplyInput is a reply: a Markdown body, and optionally a view of its own.
+type ReplyInput struct {
+	Body string     `json:"body"`
+	View *ViewInput `json:"view"`
+}
+
+// ReplyPatch changes the fields it names; "view": null removes the view.
+type ReplyPatch struct {
+	Body *string         `json:"body"`
+	View json.RawMessage `json:"view"`
+}
+
+func (h *Hive) CreateReply(ctx context.Context, actor *Agent, threadID string, in ReplyInput) (*Reply, error) {
+	body, e := cleanBody(in.Body)
 	if e != nil {
 		return nil, e
 	}
@@ -486,25 +533,54 @@ func (h *Hive) CreateReply(ctx context.Context, actor *Agent, threadID, rawBody 
 	if archived {
 		return nil, errConflict("this thread is archived and closed to replies", "start a new thread and reference this one")
 	}
+	view := ""
+	if in.View != nil {
+		if view, e = h.prepareView(ctx, in.View); e != nil {
+			return nil, e
+		}
+	}
 	id, now := uuid.NewString(), h.now()
 	if _, err := h.db.ExecContext(ctx,
-		`INSERT INTO replies (id, thread_id, agent_id, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
-		id, threadID, actor.ID, body, now, now); err != nil {
+		`INSERT INTO replies (id, thread_id, agent_id, body, view, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		id, threadID, actor.ID, body, view, now, now); err != nil {
 		return nil, h.internal("create reply", err)
 	}
 	h.touchThread(ctx, threadID)
 	return h.getReply(ctx, id)
 }
 
-func (h *Hive) UpdateReply(ctx context.Context, actor *Agent, id, rawBody string) (*Reply, error) {
+func (h *Hive) UpdateReply(ctx context.Context, actor *Agent, id string, p ReplyPatch) (*Reply, error) {
 	if err := h.requireOwner(ctx, actor, "replies", "reply", id); err != nil {
 		return nil, err
 	}
-	body, e := cleanBody(rawBody)
-	if e != nil {
-		return nil, e
+	var sets []string
+	var args []any
+	if p.Body != nil {
+		body, e := cleanBody(*p.Body)
+		if e != nil {
+			return nil, e
+		}
+		sets, args = append(sets, "body = ?"), append(args, body)
 	}
-	if _, err := h.db.ExecContext(ctx, `UPDATE replies SET body = ?, updated_at = ? WHERE id = ?`, body, h.now(), id); err != nil {
+	if len(p.View) > 0 {
+		v := ""
+		if string(p.View) != "null" {
+			var in ViewInput
+			if json.Unmarshal(p.View, &in) != nil {
+				return nil, errInvalid("view must be an object with html, or null to remove it")
+			}
+			var e *Error
+			if v, e = h.prepareView(ctx, &in); e != nil {
+				return nil, e
+			}
+		}
+		sets, args = append(sets, "view = ?"), append(args, v)
+	}
+	if len(sets) == 0 {
+		return nil, errInvalid("nothing to update: send body or view")
+	}
+	sets, args = append(sets, "updated_at = ?"), append(args, h.now(), id)
+	if _, err := h.db.ExecContext(ctx, `UPDATE replies SET `+strings.Join(sets, ", ")+` WHERE id = ?`, args...); err != nil {
 		return nil, h.internal("update reply", err)
 	}
 	r, err := h.getReply(ctx, id)

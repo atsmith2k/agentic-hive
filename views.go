@@ -53,6 +53,7 @@ type ViewInput struct {
 	Libraries []string `json:"libraries"`
 	Images    []string `json:"images"`
 	Hosts     []string `json:"hosts"`
+	Kits      []string `json:"kits"`
 }
 
 // Asset is a library or image the hive fetched once and keeps a copy of.
@@ -65,11 +66,14 @@ type Asset struct {
 
 // View is a thread's HTML view. HTML is left out unless it was asked for.
 type View struct {
-	HTML      string  `json:"html,omitempty"`
-	HTMLBytes int     `json:"html_bytes"`
-	Libraries []Asset `json:"libraries"`
-	Images    []Asset `json:"images"`
-	Hosts     []Host  `json:"hosts"`
+	HTML      string   `json:"html,omitempty"`
+	HTMLBytes int      `json:"html_bytes"`
+	Libraries []Asset  `json:"libraries"`
+	Images    []Asset  `json:"images"`
+	Hosts     []Host   `json:"hosts"`
+	Kits      []string `json:"kits"` // agent/name@version, as pinned when the view was posted
+
+	kits []KitRef
 }
 
 // Host is a live-data host a view declared, with what the operator says of it.
@@ -83,6 +87,7 @@ type storedView struct {
 	Libraries []Asset  `json:"libraries"`
 	Images    []Asset  `json:"images"`
 	Hosts     []string `json:"hosts"`
+	Kits      []KitRef `json:"kits"`
 }
 
 type FormSpec struct {
@@ -151,6 +156,10 @@ func (h *Hive) prepareView(ctx context.Context, in *ViewInput) (string, *Error) 
 			seen[host] = true
 			v.Hosts = append(v.Hosts, host)
 		}
+	}
+	var e *Error
+	if v.Kits, e = h.pinKits(ctx, in.Kits); e != nil {
+		return "", e
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -256,10 +265,23 @@ func (h *Hive) AssetBody(ctx context.Context, hash string) (contentType string, 
 
 // ThreadView loads a thread's view, or nil if it has none.
 func (h *Hive) ThreadView(ctx context.Context, threadID string, withHTML bool) (*View, error) {
+	return h.viewOf(ctx, false, threadID, withHTML)
+}
+
+// ReplyView loads a reply's view, or nil if it has none.
+func (h *Hive) ReplyView(ctx context.Context, replyID string, withHTML bool) (*View, error) {
+	return h.viewOf(ctx, true, replyID, withHTML)
+}
+
+func (h *Hive) viewOf(ctx context.Context, reply bool, id string, withHTML bool) (*View, error) {
+	table, what := "threads", "thread"
+	if reply {
+		table, what = "replies", "reply"
+	}
 	var raw string
-	err := h.db.QueryRowContext(ctx, `SELECT view FROM threads WHERE id = ?`, threadID).Scan(&raw)
+	err := h.db.QueryRowContext(ctx, `SELECT view FROM `+table+` WHERE id = ?`, id).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, errNotFound("thread")
+		return nil, errNotFound(what)
 	}
 	if err != nil {
 		return nil, h.internal("read view", err)
@@ -271,9 +293,12 @@ func (h *Hive) ThreadView(ctx context.Context, threadID string, withHTML bool) (
 	if err := json.Unmarshal([]byte(raw), &s); err != nil {
 		return nil, h.internal("decode view", err)
 	}
-	v := &View{HTMLBytes: len(s.HTML), Libraries: s.Libraries, Images: s.Images, Hosts: []Host{}}
+	v := &View{HTMLBytes: len(s.HTML), Libraries: s.Libraries, Images: s.Images, Hosts: []Host{}, Kits: []string{}, kits: s.Kits}
 	if withHTML {
 		v.HTML = s.HTML
+	}
+	for _, k := range s.Kits {
+		v.Kits = append(v.Kits, k.Ref)
 	}
 	statuses, err := h.hostStatuses(ctx)
 	if err != nil {
@@ -320,7 +345,7 @@ func (h *Hive) DataHosts(ctx context.Context) ([]HostUse, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := h.db.QueryContext(ctx, `SELECT view FROM threads WHERE view <> ''`)
+	rows, err := h.db.QueryContext(ctx, `SELECT view FROM threads WHERE view <> '' UNION ALL SELECT view FROM replies WHERE view <> ''`)
 	if err != nil {
 		return nil, h.internal("query views", err)
 	}
@@ -383,10 +408,11 @@ func (h *Hive) SetDataHost(ctx context.Context, admin, rawHost, status string) (
 	return host + " " + status, nil
 }
 
-// LiveData fetches a URL for a thread's view, on behalf of the person
-// looking at it. The thread must have declared the host, the operator must
-// not have blocked it, and the request carries nothing of the viewer's.
-func (h *Hive) LiveData(ctx context.Context, viewer, threadID, rawURL string) (*fetched, error) {
+// LiveData fetches a URL for the view of a thread, or of a reply, on behalf
+// of the person looking at it. The view must have declared the host, the
+// operator must not have blocked it, and the request carries nothing of the
+// viewer's.
+func (h *Hive) LiveData(ctx context.Context, viewer string, reply bool, id, rawURL string) (*fetched, error) {
 	if h.cfg.LiveData == "off" {
 		return nil, errForbidden("live data is turned off on this hive")
 	}
@@ -397,7 +423,7 @@ func (h *Hive) LiveData(ctx context.Context, viewer, threadID, rawURL string) (*
 	if e != nil {
 		return nil, e
 	}
-	view, err := h.ThreadView(ctx, threadID, false)
+	view, err := h.viewOf(ctx, reply, id, false)
 	if err != nil {
 		return nil, err
 	}
@@ -413,7 +439,7 @@ func (h *Hive) LiveData(ctx context.Context, viewer, threadID, rawURL string) (*
 	}
 	switch {
 	case status == "":
-		return nil, &Error{Status: 403, Code: "forbidden", Message: "this thread did not declare " + host,
+		return nil, &Error{Status: 403, Code: "forbidden", Message: "this view did not declare " + host,
 			Hint: "a view can only read hosts listed in its hosts when it was posted"}
 	case status == "blocked":
 		return nil, errForbidden("the operator of this hive has blocked " + host)

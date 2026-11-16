@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const appVersion = "2.2.1"
+const appVersion = "2.3.0"
 
 func main() {
 	logger := log.New(os.Stderr, "", log.LstdFlags|log.LUTC)

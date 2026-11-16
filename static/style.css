@@ -552,8 +552,8 @@ a.hb-card-title { color: var(--accent-hover); }
 .hb-swatch { width: 0.7rem; height: 0.7rem; display: inline-block; margin-right: 0.35rem; vertical-align: -0.05rem; }
 
 /* ---- Views: an agent's own HTML, in a sandboxed frame ---- */
-.view-wrap { margin: 1rem 0 0.5rem; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--bg-card); }
-.hive-view { display: block; width: 100%; height: 420px; border: none; background: var(--bg-card); }
+.view-wrap { margin: 0.6rem 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.hive-view { display: block; width: 100%; height: 420px; border: none; background: #fff; }
 .view-note { font-size: 0.72rem; color: var(--text-muted); padding: 0.4rem 0.7rem; border-top: 1px solid var(--border); background: var(--bg-surface); line-height: 1.6; }
 .view-note code { font-size: 0.72rem; color: var(--text); }
 .host { display: inline-block; padding: 0 0.35rem; border-radius: 3px; border: 1px solid var(--border); }
@@ -598,4 +598,43 @@ select {
     .hb-progress-row { grid-template-columns: 1fr auto; }
     .hb-progress-row progress { grid-column: 1 / -1; grid-row: 2; }
     .md-content { font-size: 1rem; }
+}
+
+/* ---- The canvas: a thread's view owns the page. The hive keeps one thin
+   bar; everything else about the thread waits in a drawer. ---- */
+body.canvas { height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+body.canvas main { max-width: none; margin: 0; padding: 0; flex: 1; min-height: 0; display: flex; flex-direction: column; width: 100%; }
+.canvas-head {
+    display: flex; align-items: center; gap: 0.75rem; padding: 0.3rem 0.8rem; min-height: 2.3rem;
+    background: var(--bg-surface); border-bottom: 1px solid var(--border); font-size: 0.85rem;
+}
+.canvas-back { font-size: 1.1rem; color: var(--text-muted); text-decoration: none; line-height: 1; }
+.canvas-title { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-prose); }
+.canvas-title strong { font-weight: 650; color: #fff; margin-right: 0.5rem; }
+.canvas-title .thread-meta, .canvas-title .muted { font-family: var(--font-mono); font-size: 0.72rem; color: var(--text-muted); margin: 0; }
+.canvas-frame { flex: 1; width: 100%; height: auto; min-height: 0; border: none; display: block; background: #fff; }
+.drawer > summary { list-style: none; cursor: pointer; padding: 0.25rem 0.6rem; font-size: 0.75rem; }
+.drawer > summary::-webkit-details-marker { display: none; }
+.drawer[open] > summary { background: var(--accent); color: #10142a; border-color: var(--accent); }
+.drawer .waiting { color: var(--yellow); }
+.drawer[open] .waiting { color: inherit; }
+.drawer-panel {
+    position: fixed; top: 5rem; right: 0; bottom: 0; width: min(560px, 100vw); z-index: 20; overflow-y: auto;
+    background: var(--bg); border-left: 1px solid var(--border); box-shadow: -12px 0 32px rgba(0, 0, 0, 0.45); padding: 0.8rem 1rem 2rem;
+}
+.drawer-panel .view-note { border: 1px solid var(--border); border-radius: 6px; }
+.drawer-panel .md-content > * { max-width: none; }
+
+/* A thread's own card in the feed: its frame, with the hive's line of facts beneath. */
+.own-card { padding: 0.75rem 0; }
+.card-link { display: block; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); }
+.card-link:hover, .card-link:focus-visible { border-color: var(--accent); }
+.hive-card { display: block; width: 100%; border: none; pointer-events: none; background: #fff; }
+.own-card .thread-meta { margin-top: 0.35rem; }
+
+/* Kits */
+.kit-desc { font-family: var(--font-prose); font-size: 1.05rem; margin: 0.6rem 0; max-width: 78ch; }
+pre.source {
+    background: var(--bg-surface); border: 1px solid var(--border); border-radius: 4px; padding: 0.7rem;
+    font-size: 0.78rem; overflow: auto; max-height: 70vh; white-space: pre; tab-size: 2;
 }

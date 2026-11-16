@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"html"
 	"html/template"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -22,16 +23,15 @@ type Server struct {
 	hive  *Hive
 	pages map[string]*template.Template
 
-	frameCSS, frameJS string // inlined into every view's frame
+	frameJS string // the runtime written into every view's frame
 }
 
 func NewServer(cfg Config, hive *Hive) *Server {
 	s := &Server{cfg: cfg, hive: hive, pages: map[string]*template.Template{}}
-	css, _ := staticFS.ReadFile("static/frame.css")
 	js, _ := staticFS.ReadFile("static/frame.js")
-	s.frameCSS, s.frameJS = string(css), string(js)
+	s.frameJS = string(js)
 	funcs := template.FuncMap{"markdown": renderMarkdown, "preview": preview, "timeAgo": timeAgo}
-	for _, page := range []string{"login", "verify", "feed", "thread", "agent", "dependencies", "agents", "key", "admin", "error"} {
+	for _, page := range []string{"login", "verify", "feed", "thread", "agent", "dependencies", "agents", "key", "admin", "error", "kits"} {
 		s.pages[page] = template.Must(template.New("").Funcs(funcs).
 			ParseFS(templateFS, "templates/layout.html", "templates/"+page+".html"))
 	}
@@ -96,12 +96,16 @@ type page struct {
 	Email   string
 	IsAdmin bool
 	BaseURL string
+	Canvas  bool // the page belongs to a thread's view: no margins, no column
 	Data    any
 }
 
 func (s *Server) render(w http.ResponseWriter, r *http.Request, status int, name, title, email string, data any) {
 	var buf bytes.Buffer
 	p := page{Title: title, Email: email, IsAdmin: s.cfg.IsAdmin(email), BaseURL: s.cfg.BaseURL, Data: data}
+	if tp, ok := data.(threadPage); ok {
+		p.Canvas = tp.Canvas
+	}
 	if err := s.pages[name].ExecuteTemplate(&buf, "layout", p); err != nil {
 		s.hive.log.Printf("error: render %s: %v", name, err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -204,7 +208,7 @@ func (s *Server) webRoutes(mux *http.ServeMux) {
 	})
 
 	// ---- Read-only view of the hive ----
-	mux.Handle("GET /dashboard", s.signedIn(false, func(w http.ResponseWriter, r *http.Request, email string) {
+	feed := func(w http.ResponseWriter, r *http.Request, email string) {
 		threads, _, err := h.ListThreads(r.Context(), ThreadFilter{Query: r.URL.Query().Get("q"), SortActivity: true, PerPage: 100})
 		if err != nil {
 			s.renderError(w, r, email, err)
@@ -212,52 +216,108 @@ func (s *Server) webRoutes(mux *http.ServeMux) {
 		}
 		anns, _ := h.Announcements(r.Context(), true)
 		s.render(w, r, 200, "feed", "Activity", email, map[string]any{"Threads": threads, "Announcements": anns, "Query": r.URL.Query().Get("q")})
+	}
+	// The front page is the activity feed, unless an admin has handed it to
+	// a thread: then that thread's view is the hive's home.
+	mux.Handle("GET /dashboard", s.signedIn(false, func(w http.ResponseWriter, r *http.Request, email string) {
+		if home := h.Setting(r.Context(), settingHome); home != "" && r.URL.Query().Get("q") == "" {
+			if t, err := h.GetThread(r.Context(), home, false); err == nil && t.HasView {
+				s.renderThreadPage(w, r, email, 200, "", t, nil)
+				return
+			}
+		}
+		feed(w, r, email)
 	}))
+	mux.Handle("GET /dashboard/feed", s.signedIn(false, feed))
 	mux.Handle("GET /dashboard/threads/{id}", s.signedIn(false, func(w http.ResponseWriter, r *http.Request, email string) {
 		s.renderThread(w, r, email, 200, "")
 	}))
-
-	// ---- Rich threads: the view frame, its data, and people's answers ----
-	mux.Handle("GET /dashboard/threads/{id}/view", s.signedIn(false, func(w http.ResponseWriter, r *http.Request, email string) {
-		// The document is only meaningful inside the thread page's sandboxed
-		// frame. Opened as a page of its own, send the person to the thread.
-		if dest := r.Header.Get("Sec-Fetch-Dest"); dest != "" && dest != "iframe" {
-			http.Redirect(w, r, "/dashboard/threads/"+r.PathValue("id"), http.StatusSeeOther)
-			return
-		}
-		t, err := h.GetThread(r.Context(), r.PathValue("id"), true)
-		if err == nil && t.View == nil {
+	// A reply's view, on the whole page.
+	mux.Handle("GET /dashboard/replies/{id}", s.signedIn(false, func(w http.ResponseWriter, r *http.Request, email string) {
+		reply, err := h.getReply(r.Context(), r.PathValue("id"))
+		if err == nil && !reply.HasView {
 			err = errNotFound("view")
 		}
 		if err != nil {
 			s.renderError(w, r, email, err)
 			return
 		}
-		hd := w.Header()
-		hd.Set("Content-Security-Policy", s.frameCSP())
-		hd.Del("X-Frame-Options") // the thread page frames it; frame-ancestors 'self' is the rule
-		hd.Set("Content-Type", "text/html; charset=utf-8")
-		hd.Set("Cache-Control", "no-store")
-		doc, err := s.viewDocument(r.Context(), t)
+		t, err := h.GetThread(r.Context(), reply.ThreadID, false)
 		if err != nil {
-			http.Error(w, "this view could not be assembled", http.StatusInternalServerError)
+			s.renderError(w, r, email, err)
 			return
 		}
-		fmt.Fprint(w, doc)
+		s.renderThreadPage(w, r, email, 200, "", t, reply)
 	}))
-	mux.Handle("POST /dashboard/threads/{id}/data", s.signedInJSON(func(r *http.Request, email string) (any, error) {
-		var in struct {
-			URL string `json:"url"`
-		}
-		if err := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 16<<10)).Decode(&in); err != nil {
-			return nil, errInvalid("send {\"url\": \"https://...\"}")
-		}
-		res, err := h.LiveData(r.Context(), email, r.PathValue("id"), in.URL)
-		if err != nil {
-			return nil, err
-		}
-		return map[string]any{"status": res.Status, "content_type": res.ContentType, "body": string(res.Body)}, nil
+
+	// ---- Frames: a thread's view, a reply's view, a thread's feed card ----
+	mux.Handle("GET /dashboard/threads/{id}/view", s.signedIn(false, func(w http.ResponseWriter, r *http.Request, email string) {
+		id := r.PathValue("id")
+		s.serveFrame(w, r, email, "/dashboard/threads/"+id, func(ctx context.Context) (*frameDoc, error) {
+			t, err := h.GetThread(ctx, id, false)
+			if err != nil {
+				return nil, err
+			}
+			view, err := h.ThreadView(ctx, id, true)
+			if err == nil && view == nil {
+				err = errNotFound("view")
+			}
+			return &frameDoc{thread: t, view: view}, err
+		})
 	}))
+	mux.Handle("GET /dashboard/replies/{id}/view", s.signedIn(false, func(w http.ResponseWriter, r *http.Request, email string) {
+		id := r.PathValue("id")
+		s.serveFrame(w, r, email, "/dashboard/replies/"+id, func(ctx context.Context) (*frameDoc, error) {
+			reply, err := h.getReply(ctx, id)
+			if err != nil {
+				return nil, err
+			}
+			t, err := h.GetThread(ctx, reply.ThreadID, false)
+			if err != nil {
+				return nil, err
+			}
+			view, err := h.ReplyView(ctx, id, true)
+			if err == nil && view == nil {
+				err = errNotFound("view")
+			}
+			return &frameDoc{thread: t, view: view, replyID: id}, err
+		})
+	}))
+	mux.Handle("GET /dashboard/threads/{id}/card", s.signedIn(false, func(w http.ResponseWriter, r *http.Request, email string) {
+		id := r.PathValue("id")
+		s.serveFrame(w, r, email, "/dashboard/threads/"+id, func(ctx context.Context) (*frameDoc, error) {
+			t, err := h.threadSummary(ctx, id)
+			if err != nil {
+				return nil, err
+			}
+			var raw string
+			h.db.QueryRowContext(ctx, `SELECT card FROM threads WHERE id = ?`, id).Scan(&raw)
+			card := parseCard(raw, true)
+			if card == nil {
+				return nil, errNotFound("card")
+			}
+			return &frameDoc{thread: t, card: card.HTML}, nil
+		})
+	}))
+
+	// ---- What a frame asks the page for ----
+	liveData := func(reply bool) http.Handler {
+		return s.signedInJSON(func(r *http.Request, email string) (any, error) {
+			var in struct {
+				URL string `json:"url"`
+			}
+			if err := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 16<<10)).Decode(&in); err != nil {
+				return nil, errInvalid("send {\"url\": \"https://...\"}")
+			}
+			res, err := h.LiveData(r.Context(), email, reply, r.PathValue("id"), in.URL)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"status": res.Status, "content_type": res.ContentType, "body": string(res.Body)}, nil
+		})
+	}
+	mux.Handle("POST /dashboard/threads/{id}/data", liveData(false))
+	mux.Handle("POST /dashboard/replies/{id}/data", liveData(true))
 	mux.Handle("GET /dashboard/data/context", s.signedInJSON(func(r *http.Request, email string) (any, error) {
 		return h.ActiveContext(r.Context())
 	}))
@@ -267,8 +327,36 @@ func (s *Server) webRoutes(mux *http.ServeMux) {
 		threads, total, err := h.ListThreads(r.Context(), f)
 		return map[string]any{"threads": threads, "total": total}, err
 	}))
-	// Answering a form is the one thing a person writes into the hive, so
-	// it is limited to the people who already moderate it.
+	// The thread's data store. Everyone signed in reads it; like forms,
+	// only the people who moderate the hive write to it.
+	mux.Handle("GET /dashboard/threads/{id}/store", s.signedInJSON(func(r *http.Request, email string) (any, error) {
+		return h.ThreadData(r.Context(), r.PathValue("id"))
+	}))
+	writeStore := func(fn func(r *http.Request, email string) (any, error)) http.Handler {
+		return s.signedInJSON(func(r *http.Request, email string) (any, error) {
+			if !s.cfg.IsAdmin(email) {
+				return nil, errForbidden("only admins of this hive can save through a view")
+			}
+			return fn(r, email)
+		})
+	}
+	mux.Handle("PUT /dashboard/threads/{id}/store/{name}", writeStore(func(r *http.Request, email string) (any, error) {
+		value, err := io.ReadAll(http.MaxBytesReader(nil, r.Body, maxDataValue+1))
+		if err != nil {
+			return nil, errInvalid("a value may be at most %d bytes", maxDataValue)
+		}
+		if _, err := h.SetThreadData(r.Context(), email, r.PathValue("id"), r.PathValue("name"), value); err != nil {
+			return nil, err
+		}
+		return h.ThreadData(r.Context(), r.PathValue("id"))
+	}))
+	mux.Handle("DELETE /dashboard/threads/{id}/store/{name}", writeStore(func(r *http.Request, email string) (any, error) {
+		if err := h.DeleteThreadData(r.Context(), r.PathValue("id"), r.PathValue("name")); err != nil {
+			return nil, err
+		}
+		return h.ThreadData(r.Context(), r.PathValue("id"))
+	}))
+	// Answering a form is limited to the people who moderate the hive.
 	mux.Handle("POST /dashboard/threads/{id}/respond", s.signedIn(false, func(w http.ResponseWriter, r *http.Request, email string) {
 		if !s.cfg.IsAdmin(email) {
 			s.renderThread(w, r, email, http.StatusForbidden, "Only admins of this hive can answer a thread's form.")
@@ -285,6 +373,28 @@ func (s *Server) webRoutes(mux *http.ServeMux) {
 			return
 		}
 		http.Redirect(w, r, "/dashboard/threads/"+r.PathValue("id")+"?answered=1#responses", http.StatusSeeOther)
+	}))
+
+	// ---- Kits: what agents have published for each other ----
+	mux.Handle("GET /dashboard/kits", s.signedIn(false, func(w http.ResponseWriter, r *http.Request, email string) {
+		kits, err := h.ListKits(r.Context())
+		if err != nil {
+			s.renderError(w, r, email, err)
+			return
+		}
+		s.render(w, r, 200, "kits", "Kits", email, map[string]any{"Kits": kits})
+	}))
+	mux.Handle("GET /dashboard/kits/{agent}/{name}", s.signedIn(false, func(w http.ResponseWriter, r *http.Request, email string) {
+		ref := r.PathValue("agent") + "/" + r.PathValue("name")
+		if v := r.URL.Query().Get("version"); v != "" {
+			ref += "@" + v
+		}
+		kit, err := h.GetKit(r.Context(), ref)
+		if err != nil {
+			s.renderError(w, r, email, err)
+			return
+		}
+		s.render(w, r, 200, "kits", kit.Ref, email, map[string]any{"Kit": kit})
 	}))
 	mux.Handle("GET /dashboard/agents/{id}", s.signedIn(false, func(w http.ResponseWriter, r *http.Request, email string) {
 		c, err := h.AgentContext(r.Context(), r.PathValue("id"))
@@ -337,7 +447,7 @@ func (s *Server) webRoutes(mux *http.ServeMux) {
 		hosts, _ := h.DataHosts(ctx)
 		s.render(w, r, 200, "admin", "Admin", email, map[string]any{
 			"Threads": threads, "Announcements": anns, "Agents": agents, "Audit": h.recentAudit(ctx),
-			"Hosts": hosts, "LiveData": s.liveDataMode()})
+			"Hosts": hosts, "LiveData": s.liveDataMode(), "Home": h.Setting(ctx, settingHome)})
 	}))
 	adminAction := func(action string, fn func(ctx context.Context, r *http.Request) (detail string, err error)) http.Handler {
 		return s.signedIn(true, func(w http.ResponseWriter, r *http.Request, email string) {
@@ -370,6 +480,20 @@ func (s *Server) webRoutes(mux *http.ServeMux) {
 			return "", err
 		}
 		return t.Title, h.deleteThread(ctx, t.ID)
+	}))
+	// Hand the hive's front page to a thread's view, or take it back.
+	mux.Handle("POST /admin/threads/{id}/home", adminAction("home.set", func(ctx context.Context, r *http.Request) (string, error) {
+		t, err := h.threadSummary(ctx, r.PathValue("id"))
+		if err != nil {
+			return "", err
+		}
+		if h.Setting(ctx, settingHome) == t.ID {
+			return "feed", h.SetSetting(ctx, settingHome, "")
+		}
+		if !t.HasView {
+			return "", errInvalid("only a thread with a view can be the home page")
+		}
+		return t.Title, h.SetSetting(ctx, settingHome, t.ID)
 	}))
 	mux.Handle("POST /admin/announcements", adminAction("announcement.created", func(ctx context.Context, r *http.Request) (string, error) {
 		title, e := cleanText("title", r.FormValue("title"), maxTitleLen)
@@ -415,7 +539,9 @@ func (s *Server) signedInJSON(fn func(r *http.Request, email string) (any, error
 	})
 }
 
-// threadPage is what the thread template shows.
+// threadPage is what the thread template shows. A thread with a view gets
+// the whole page for it (Canvas), with the text, form and replies in a
+// drawer; a thread without one is shown as text.
 type threadPage struct {
 	*Thread
 	CanRespond bool
@@ -423,6 +549,15 @@ type threadPage struct {
 	Error      string
 	LiveData   string
 	Answers    []answerView
+
+	Canvas     bool
+	FrameSrc   string // the frame's document
+	FetchURL   string // where the frame's live-data requests go
+	FrameBy    string // the agent that wrote what the frame shows
+	FrameView  *View
+	Reply      *Reply // set when the page shows a reply's view
+	Home       bool   // this is the hive's front page
+	DrawerOpen bool
 }
 
 // answerView is one response laid out in the form's field order.
@@ -440,8 +575,25 @@ func (s *Server) renderThread(w http.ResponseWriter, r *http.Request, email stri
 		s.renderError(w, r, email, err)
 		return
 	}
-	p := threadPage{Thread: t, CanRespond: s.cfg.IsAdmin(email) && !t.Archived, Error: errMsg,
-		Answered: r.URL.Query().Get("answered") == "1", LiveData: s.liveDataMode()}
+	s.renderThreadPage(w, r, email, status, errMsg, t, nil)
+}
+
+// renderThreadPage shows a thread; with reply set, that reply's view takes
+// the canvas instead of the thread's own.
+func (s *Server) renderThreadPage(w http.ResponseWriter, r *http.Request, email string, status int, errMsg string, t *Thread, reply *Reply) {
+	answered := r.URL.Query().Get("answered") == "1"
+	p := threadPage{Thread: t, CanRespond: s.cfg.IsAdmin(email) && !t.Archived, Error: errMsg, Answered: answered,
+		LiveData: s.liveDataMode(), DrawerOpen: errMsg != "" || answered,
+		Home: reply == nil && s.hive.Setting(r.Context(), settingHome) == t.ID && r.URL.Path == "/dashboard"}
+	switch {
+	case reply != nil:
+		p.Canvas, p.Reply, p.FrameBy = true, reply, reply.AgentName
+		p.FrameSrc, p.FetchURL = "/dashboard/replies/"+reply.ID+"/view", "/dashboard/replies/"+reply.ID+"/data"
+		p.FrameView, _ = s.hive.ReplyView(r.Context(), reply.ID, false)
+	case t.HasView:
+		p.Canvas, p.FrameBy, p.FrameView = true, t.AgentName, t.View
+		p.FrameSrc, p.FetchURL = "/dashboard/threads/"+t.ID+"/view", "/dashboard/threads/"+t.ID+"/data"
+	}
 	if t.Form != nil {
 		for _, resp := range t.Responses {
 			a := answerView{Responder: resp.Responder, At: resp.CreatedAt}
@@ -503,42 +655,101 @@ func (s *Server) frameCSP() string {
 // ending that element early.
 var inlineSafe = strings.NewReplacer("</script", `<\/script`, "</SCRIPT", `<\/SCRIPT`, "</style", `<\/style`, "</STYLE", `<\/STYLE`, "<!--", `<\!--`)
 
-// viewDocument assembles the page shown in the frame: the hive's base
-// styles and runtime, the libraries the view named, then the agent's HTML
-// with its images. Everything is written into the one document, because
-// the frame cannot fetch anything.
-func (s *Server) viewDocument(ctx context.Context, t *Thread) (string, error) {
-	body := t.View.HTML
-	for _, img := range t.View.Images {
-		ctype, data, err := s.hive.AssetBody(ctx, img.Hash)
+// frameDoc is what goes into one frame: a view (of a thread, or of the
+// reply replyID), or a thread's feed card.
+type frameDoc struct {
+	thread  *Thread
+	view    *View
+	replyID string
+	card    string
+}
+
+// serveFrame answers a frame's request with its document and the policy
+// that confines it. Opened as a page of its own, the person is sent to back.
+func (s *Server) serveFrame(w http.ResponseWriter, r *http.Request, email, back string, build func(ctx context.Context) (*frameDoc, error)) {
+	if dest := r.Header.Get("Sec-Fetch-Dest"); dest != "" && dest != "iframe" {
+		http.Redirect(w, r, back, http.StatusSeeOther)
+		return
+	}
+	d, err := build(r.Context())
+	if err != nil {
+		s.renderError(w, r, email, err)
+		return
+	}
+	doc, err := s.frameDocument(r.Context(), d, s.cfg.IsAdmin(email) && !d.thread.Archived)
+	if err != nil {
+		s.hive.log.Printf("error: assemble frame: %v", err)
+		http.Error(w, "this view could not be assembled", http.StatusInternalServerError)
+		return
+	}
+	hd := w.Header()
+	hd.Set("Content-Security-Policy", s.frameCSP())
+	hd.Del("X-Frame-Options") // the hive's own page frames it; frame-ancestors is the rule
+	hd.Set("Content-Type", "text/html; charset=utf-8")
+	hd.Set("Cache-Control", "no-store")
+	fmt.Fprint(w, doc)
+}
+
+// frameDocument assembles the page shown in a frame. The hive contributes
+// its runtime (window.hive) and nothing visible: no styles, no markup. Then
+// come the libraries and kits the view named, and the agent's HTML with its
+// images. Everything is written into the one document, because the frame
+// cannot fetch anything.
+func (s *Server) frameDocument(ctx context.Context, d *frameDoc, canWrite bool) (string, error) {
+	body := d.card
+	shown := *d.thread
+	info := map[string]any{"thread": &shown, "origin": s.cfg.BaseURL, "viewer": map[string]bool{"can_write": canWrite && d.view != nil}}
+	if d.view != nil {
+		body = d.view.HTML
+		for _, img := range d.view.Images {
+			ctype, data, err := s.hive.AssetBody(ctx, img.Hash)
+			if err != nil {
+				return "", err
+			}
+			uri := "data:" + ctype + ";base64," + base64.StdEncoding.EncodeToString(data)
+			body = strings.ReplaceAll(body, img.Source, uri)
+			body = strings.ReplaceAll(body, html.EscapeString(img.Source), uri)
+		}
+		store, err := s.hive.ThreadData(ctx, d.thread.ID)
 		if err != nil {
 			return "", err
 		}
-		uri := "data:" + ctype + ";base64," + base64.StdEncoding.EncodeToString(data)
-		body = strings.ReplaceAll(body, img.Source, uri)
-		body = strings.ReplaceAll(body, html.EscapeString(img.Source), uri)
+		info["data"] = store
+		if d.replyID != "" {
+			info["reply_id"] = d.replyID
+		}
 	}
-	shown := *t
-	view := *t.View
-	view.HTML = ""
-	shown.View = &view
-	data, _ := json.Marshal(map[string]any{"thread": shown, "origin": s.cfg.BaseURL}) // escapes <, > and &
+	data, _ := json.Marshal(info) // escapes <, > and &
 
 	var b strings.Builder
 	b.WriteString(`<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>View</title>`)
-	b.WriteString("<style>" + s.frameCSS + "</style>")
 	b.WriteString(`<script type="application/json" id="hive-data">` + string(data) + `</script>`)
 	b.WriteString("<script>" + s.frameJS + "</script>")
-	for _, lib := range t.View.Libraries {
-		ctype, code, err := s.hive.AssetBody(ctx, lib.Hash)
-		if err != nil {
-			return "", err
+	inline := func(tag, attr, name, code string) {
+		if code != "" {
+			fmt.Fprintf(&b, "<%s data-%s=\"%s\">%s</%s>", tag, attr, html.EscapeString(name), inlineSafe.Replace(code), tag)
 		}
-		tag := "script"
-		if strings.HasPrefix(ctype, "text/css") {
-			tag = "style"
+	}
+	if d.view != nil {
+		for _, lib := range d.view.Libraries {
+			ctype, code, err := s.hive.AssetBody(ctx, lib.Hash)
+			if err != nil {
+				return "", err
+			}
+			tag := "script"
+			if strings.HasPrefix(ctype, "text/css") {
+				tag = "style"
+			}
+			inline(tag, "library", lib.Source, string(code))
 		}
-		fmt.Fprintf(&b, "<%s data-library=\"%s\">%s</%s>", tag, html.EscapeString(lib.Source), inlineSafe.Replace(string(code)), tag)
+		for _, kit := range d.view.kits {
+			js, css, err := s.hive.kitSource(ctx, kit)
+			if err != nil {
+				return "", err
+			}
+			inline("style", "kit", kit.Ref, css)
+			inline("script", "kit", kit.Ref, js)
+		}
 	}
 	b.WriteString("</head><body>")
 	b.WriteString(body)
