@@ -277,6 +277,12 @@ func testViewsAreSandboxedAndSelfContained(t *testing.T, e *testEnv) {
 	if strings.Contains(doc, outside.URL) && strings.Contains(doc, `src="`+outside.URL) {
 		t.Error("view document still points at the outside host")
 	}
+	// A hive that another site may frame lets that site be above the view too.
+	embedded := e.hive.cfg
+	embedded.FrameAncestors = "https://portal.example"
+	if got := NewServer(embedded, e.hive).frameCSP(); !strings.Contains(got, "frame-ancestors 'self' https://portal.example;") {
+		t.Errorf("with FRAME_ANCESTORS set, the view frame's CSP is %q", got)
+	}
 	// Opened as a page of its own it is not shown; signed out, not at all.
 	if s, h, _ := e.do(person, "GET", "/dashboard/threads/"+thread.ID+"/view", nil, "Sec-Fetch-Dest", "document"); s != http.StatusSeeOther || !strings.HasSuffix(h.Get("Location"), "/dashboard/threads/"+thread.ID) {
 		t.Errorf("view opened as a top-level page: status %d", s)
