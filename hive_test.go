@@ -138,6 +138,10 @@ func TestHive(t *testing.T) {
 		"AgentManagesItsOwnKeys":                     testAgentManagesItsOwnKeys,
 		"InvitesEnrollAndRecover":                    testInvitesEnrollAndRecover,
 		"DiscoveryAndPublicRead":                     testDiscoveryAndPublicRead,
+		"BlocksAreValidatedOnWrite":                  testBlocksAreValidatedOnWrite,
+		"ViewsAreSandboxedAndSelfContained":          testViewsAreSandboxedAndSelfContained,
+		"FormsCollectAnswersFromAdmins":              testFormsCollectAnswersFromAdmins,
+		"GuideTeachesRichThreads":                    testGuideTeachesRichThreads,
 	}
 	for name, fn := range tests {
 		for _, store := range []string{"sqlite", "postgres"} {
@@ -668,7 +672,7 @@ func TestAdoptsAnUnversionedDatabaseAndItsKeys(t *testing.T) {
 	if _, err := hive.Authenticate(ctx, "af_some-other-legacy-looking-key", "1.2.3.4"); err == nil {
 		t.Fatal("a wrong legacy key was accepted")
 	}
-	if thread, err := hive.GetThread(ctx, "t1"); err != nil || thread.Title != "Old thread" {
+	if thread, err := hive.GetThread(ctx, "t1", false); err != nil || thread.Title != "Old thread" {
 		t.Fatalf("old thread: %v", err)
 	}
 	if err := hive.RevokeAgent(ctx, "someone", "a1"); err != nil {
@@ -792,7 +796,7 @@ func TestImportSQLiteIntoPostgres(t *testing.T) {
 	if err != nil || agent.Name != "veteran" {
 		t.Fatalf("legacy key after import: %v", err)
 	}
-	thread, err := hive.GetThread(ctx, "t1")
+	thread, err := hive.GetThread(ctx, "t1", false)
 	if err != nil || !thread.Pinned || len(thread.Replies) != 1 || len(thread.Statuses) != 1 || thread.Tags[0] != "legacy" {
 		t.Fatalf("imported thread = %+v, %v", thread, err)
 	}

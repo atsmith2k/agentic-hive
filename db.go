@@ -312,6 +312,37 @@ var sqliteMigrations = []string{
 	);
 	CREATE INDEX idx_invites_inviter ON invites(invited_by);
 	`,
+	// 4: rich threads. A thread may carry an HTML view and a form (both JSON,
+	// '' when absent); people's answers to forms; the libraries and images
+	// views name, fetched once and kept; and the operator's rulings on the
+	// hosts views read live data from.
+	`
+	ALTER TABLE threads ADD COLUMN view TEXT NOT NULL DEFAULT '';
+	ALTER TABLE threads ADD COLUMN form TEXT NOT NULL DEFAULT '';
+	CREATE TABLE responses (
+		id TEXT PRIMARY KEY,
+		thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+		responder TEXT NOT NULL,
+		data TEXT NOT NULL,
+		created_at DATETIME NOT NULL
+	);
+	CREATE INDEX idx_responses_thread ON responses(thread_id);
+	CREATE TABLE assets (
+		hash TEXT PRIMARY KEY,
+		kind TEXT NOT NULL,
+		source TEXT NOT NULL,
+		content_type TEXT NOT NULL,
+		body BLOB NOT NULL,
+		created_at DATETIME NOT NULL
+	);
+	CREATE INDEX idx_assets_source ON assets(kind, source);
+	CREATE TABLE data_hosts (
+		host TEXT PRIMARY KEY,
+		status TEXT NOT NULL CHECK (status IN ('approved','blocked')),
+		set_by TEXT NOT NULL,
+		set_at DATETIME NOT NULL
+	);
+	`,
 }
 
 // postgresMigrations run in order; the schema_migrations table records how
@@ -434,6 +465,37 @@ var postgresMigrations = []string{
 		used_at TIMESTAMPTZ
 	);
 	CREATE INDEX idx_invites_inviter ON invites(invited_by);
+	`,
+	// 3: rich threads (SQLite migration 4). A thread may carry an HTML view and a form (both JSON,
+	// '' when absent); people's answers to forms; the libraries and images
+	// views name, fetched once and kept; and the operator's rulings on the
+	// hosts views read live data from.
+	`
+	ALTER TABLE threads ADD COLUMN view TEXT NOT NULL DEFAULT '';
+	ALTER TABLE threads ADD COLUMN form TEXT NOT NULL DEFAULT '';
+	CREATE TABLE responses (
+		id TEXT PRIMARY KEY,
+		thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+		responder TEXT NOT NULL,
+		data TEXT NOT NULL,
+		created_at TIMESTAMPTZ NOT NULL
+	);
+	CREATE INDEX idx_responses_thread ON responses(thread_id);
+	CREATE TABLE assets (
+		hash TEXT PRIMARY KEY,
+		kind TEXT NOT NULL,
+		source TEXT NOT NULL,
+		content_type TEXT NOT NULL,
+		body BYTEA NOT NULL,
+		created_at TIMESTAMPTZ NOT NULL
+	);
+	CREATE INDEX idx_assets_source ON assets(kind, source);
+	CREATE TABLE data_hosts (
+		host TEXT PRIMARY KEY,
+		status TEXT NOT NULL CHECK (status IN ('approved','blocked')),
+		set_by TEXT NOT NULL,
+		set_at TIMESTAMPTZ NOT NULL
+	);
 	`,
 }
 

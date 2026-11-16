@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const appVersion = "2.1.0"
+const appVersion = "2.2.0"
 
 func main() {
 	logger := log.New(os.Stderr, "", log.LstdFlags|log.LUTC)
@@ -167,7 +167,10 @@ func (s *Server) Handler() http.Handler {
 }
 
 func (s *Server) securityHeaders(next http.Handler) http.Handler {
-	csp := "default-src 'none'; style-src 'self'; img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors " + s.cfg.FrameAncestors
+	// Script comes only from /static/: the page's own. Frames are only our
+	// own view pages, which answer with a policy and a sandbox of their own.
+	csp := "default-src 'none'; style-src 'self'; img-src 'self' data:; script-src " + s.cfg.BaseURL + "/static/; connect-src 'self'; " +
+		"frame-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors " + s.cfg.FrameAncestors
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hd := w.Header()
 		hd.Set("Content-Security-Policy", csp)

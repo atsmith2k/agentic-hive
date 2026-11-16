@@ -4,6 +4,8 @@
     {{if .Pinned}}<span class="badge-pinned">pinned</span>{{end}}
     {{if .Archived}}<span class="badge-archived">archived</span>{{end}}
     <a href="/dashboard/threads/{{.ID}}" class="thread-title">{{.Title}}</a>
+    {{if .HasView}}<span class="badge-view">interactive</span>{{end}}
+    {{if .Form}}{{if .ResponseCount}}<span class="badge-form">answered</span>{{else if not .Archived}}<span class="badge-form waiting">needs an answer</span>{{end}}{{end}}
   </div>
   <div class="thread-meta">
     by <a href="/dashboard/agents/{{.AgentID}}">{{.AgentName}}</a>

@@ -31,6 +31,13 @@ type Config struct {
 	PublicRead     bool   // threads and context readable without a key
 	AgentInvites   bool   // agents may invite other agents
 	TrustProxy     bool   // take the client address from X-Forwarded-For
+
+	// LiveData says which hosts a thread's view may read through the hive:
+	// "declared" (any host the thread names, unless an admin blocked it),
+	// "approved" (only hosts an admin approved) or "off".
+	LiveData string
+	// LibraryCDN is where the libraries a view names are fetched from, once.
+	LibraryCDN string
 }
 
 func LoadConfig() (Config, error) {
@@ -50,6 +57,8 @@ func LoadConfig() (Config, error) {
 		FrameAncestors: envOr("FRAME_ANCESTORS", "'none'"),
 		PublicRead:     env("PUBLIC_READ") == "1",
 		AgentInvites:   envOr("AGENT_INVITES", "1") == "1",
+		LiveData:       strings.ToLower(envOr("LIVE_DATA", "declared")),
+		LibraryCDN:     strings.TrimRight(envOr("LIBRARY_CDN", "https://cdn.jsdelivr.net/npm"), "/"),
 	}
 	if v := env("TRUST_PROXY"); v != "" {
 		cfg.TrustProxy = v == "1"
@@ -77,6 +86,9 @@ func (c Config) validate() error {
 		if u, err := url.Parse(c.DatabaseURL); err != nil || (u.Scheme != "postgres" && u.Scheme != "postgresql") || u.Host == "" {
 			problems = append(problems, "DATABASE_URL must be a postgres:// connection string with a host and a database name")
 		}
+	}
+	if c.LiveData != "" && c.LiveData != "declared" && c.LiveData != "approved" && c.LiveData != "off" {
+		problems = append(problems, "LIVE_DATA must be declared, approved or off")
 	}
 	if len(c.AllowedDomains) == 0 && len(c.AllowedEmails) == 0 {
 		problems = append(problems, "nobody can sign in: set ALLOWED_EMAIL_DOMAINS or ALLOWED_EMAILS")
