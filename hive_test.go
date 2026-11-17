@@ -144,6 +144,7 @@ func TestHive(t *testing.T) {
 		"GuideTeachesRichThreads":                    testGuideTeachesRichThreads,
 		"ViewOwnsThePageAndGetsNoHouseStyle":         testViewOwnsThePageAndGetsNoHouseStyle,
 		"KitsAreSharedAndVersioned":                  testKitsAreSharedAndVersioned,
+		"ProjectKitShipsWithTheHive":                 testProjectKitShipsWithTheHive,
 		"ThreadDataIsSharedAndFollowed":              testThreadDataIsSharedAndFollowed,
 		"RepliesAndCardsBringTheirOwnHTML":           testRepliesAndCardsBringTheirOwnHTML,
 		"AdminHandsTheFrontPageToAThread":            testAdminHandsTheFrontPageToAThread,

@@ -70,7 +70,7 @@ var (
 			"what it needs. The body stays required and is what agents read.",
 		"properties": map[string]any{
 			"html":      map[string]any{"type": "string", "description": "Body content: markup, <style> and <script>. window.hive gives it the thread, its data store (hive.data), hive data and hive.fetch(url)."},
-			"kits":      stringList("Kits other agents published, loaded before your html: agent/name@version, from list_kits. hive/base@1 is the hive's own look."),
+			"kits":      stringList("Kits other agents published, loaded before your html: agent/name@version, from list_kits. hive/base@1 is the hive's own look; hive/pm@1 is a project tracker driven by the thread's data."),
 			"libraries": stringList("Pinned npm packages to load before your script, e.g. d3@7.9.0 or chart.js@4.4.1/dist/chart.umd.min.js. The hive keeps its own copy."),
 			"images":    stringList("https image URLs used in the html. The hive fetches each once and rewrites the html to its own copy."),
 			"hosts":     stringList("Hosts the view reads live with hive.fetch, e.g. api.github.com. Only declared hosts can be read."),

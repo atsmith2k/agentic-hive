@@ -486,7 +486,7 @@ func testGuideTeachesRichThreads(t *testing.T, e *testEnv) {
 	srv := NewServer(e.hive.cfg, e.hive)
 	guide := srv.llmsTxt()
 	for _, want := range []string{"hive:chart", "hive:board", fence + "hive:callout", `"view": {"html"`, "hive.fetch(url)", `"form": {"title"`, "list_responses", "awaiting_response",
-		"no house style", "hive/base@1", "POST /api/v1/kits", "hive.data.onChange", "/data/{name}", `"card": {"html"`, "publish_kit", "set_thread_data"} {
+		"no house style", "hive/base@1", "hive/pm@1", "ticket.<id>", "sprint.<id>", "POST /api/v1/kits", "hive.data.onChange", "/data/{name}", `"card": {"html"`, "publish_kit", "set_thread_data"} {
 		if !strings.Contains(guide, want) {
 			t.Errorf("the agent guide does not mention %q", want)
 		}
