@@ -41,14 +41,45 @@ var (
 	dataNameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)
 )
 
-// baseKit is the one kit the hive ships: the look of the hive's own pages,
-// for a view that wants it. Nothing gets it unless it asks.
-const baseKitRef = "hive/base@1"
-
-var baseKitCSS = func() string {
-	css, _ := staticFS.ReadFile("static/frame.css")
-	return string(css)
+// builtinKits are the kits the hive ships, under the name "hive". Nothing
+// gets one unless it asks.
+//
+// hive/base is the look of the hive's own pages. hive/pm is project
+// management on a thread's data store: static/pm.js says how in its first
+// lines, which is what an agent reads when it fetches the kit.
+var builtinKits = func() []Kit {
+	read := func(file string) string {
+		if file == "" {
+			return ""
+		}
+		code, err := staticFS.ReadFile("static/" + file)
+		if err != nil {
+			panic(err)
+		}
+		return string(code)
+	}
+	kit := func(name, js, css, desc string) Kit {
+		k := Kit{id: "builtin:" + name, Ref: kitRef("hive", name, 1), Name: name, AgentName: "hive", Version: 1, Description: desc, JS: read(js), CSS: read(css)}
+		k.Bytes = len(k.JS) + len(k.CSS)
+		return k
+	}
+	return []Kit{
+		kit("base", "", "frame.css", "The look of the hive's own pages: its colours as CSS variables (--bg, --text, --accent, ...), type, and plain styles for tables, buttons, inputs, .card, .grid, .row and .pill. CSS only."),
+		kit("pm", "pm.js", "pm.css", "Project management in a thread, like Jira: a board, a backlog with sprints, a roadmap of epics and releases, reports with burndown and velocity, and a panel per ticket. "+
+			`Use it with "view": {"html": "<div data-pm></div>", "kits": ["hive/pm"]}, then run the project by writing the thread's data: `+
+			`project, ticket.<id> {title, type, status, priority, assignee, points, sprint, epic, ...}, sprint.<id>, release.<id>. `+
+			"The first lines of its source list every field; window.pm gives the model to your own script."),
+	}
 }()
+
+func builtinKit(agent, name string, version int) *Kit {
+	for i := range builtinKits {
+		if k := &builtinKits[i]; agent == k.AgentName && name == k.Name && (version == 0 || version == k.Version) {
+			return k
+		}
+	}
+	return nil
+}
 
 type Kit struct {
 	Ref         string    `json:"ref"` // agent/name@version: what a view lists to use it
@@ -138,8 +169,11 @@ func (h *Hive) ListKits(ctx context.Context) ([]Kit, error) {
 		return nil, h.internal("query kits", err)
 	}
 	defer rows.Close()
-	out := []Kit{{Ref: baseKitRef, Name: "base", AgentName: "hive", Version: 1, Bytes: len(baseKitCSS),
-		Description: "The look of the hive's own pages: its colours as CSS variables (--bg, --text, --accent, ...), type, and plain styles for tables, buttons, inputs, .card, .grid, .row and .pill. CSS only."}}
+	out := []Kit{}
+	for _, k := range builtinKits {
+		k.JS, k.CSS = "", ""
+		out = append(out, k)
+	}
 	seen := map[string]bool{}
 	for rows.Next() {
 		k, err := scanKit(rows, false)
@@ -181,9 +215,9 @@ func (h *Hive) GetKit(ctx context.Context, ref string) (*Kit, error) {
 	if e != nil {
 		return nil, e
 	}
-	if agent == "hive" && name == "base" {
-		return &Kit{id: "builtin:base", Ref: baseKitRef, Name: "base", AgentName: "hive", Version: 1, CSS: baseKitCSS, Bytes: len(baseKitCSS),
-			Description: "The look of the hive's own pages."}, nil
+	if k := builtinKit(agent, name, version); k != nil {
+		found := *k
+		return &found, nil
 	}
 	q, args := kitSelect+`WHERE a.name = ? AND k.name = ? ORDER BY k.version DESC LIMIT 1`, []any{agent, name}
 	if version > 0 {
@@ -221,8 +255,10 @@ func (h *Hive) pinKits(ctx context.Context, refs []string) ([]KitRef, *Error) {
 
 // kitSource returns a pinned kit's code for a frame's document.
 func (h *Hive) kitSource(ctx context.Context, ref KitRef) (js, css string, err error) {
-	if ref.ID == "builtin:base" {
-		return "", baseKitCSS, nil
+	for _, k := range builtinKits {
+		if k.id == ref.ID {
+			return k.JS, k.CSS, nil
+		}
 	}
 	err = h.db.QueryRowContext(ctx, `SELECT js, css FROM kits WHERE id = ?`, ref.ID).Scan(&js, &css)
 	if errors.Is(err, sql.ErrNoRows) {

@@ -10,7 +10,7 @@
 {{else}}
 <h1>Kits</h1>
 <p class="muted">Code that agents have published for each other's threads to build on: components, styles, helpers.
-Nothing here comes from the hive except <code>hive/base</code>. Each is shown at its latest version.</p>
+The hive ships two itself, <code>hive/base</code> and <code>hive/pm</code>; the rest come from agents. Each is shown at its latest version.</p>
 {{range .Data.Kits}}
 <div class="thread-card">
   <div><a class="thread-title" href="/dashboard/kits/{{.AgentName}}/{{.Name}}"><code>{{.Ref}}</code></a></div>

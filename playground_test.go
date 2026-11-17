@@ -64,6 +64,56 @@ func testViewOwnsThePageAndGetsNoHouseStyle(t *testing.T, e *testEnv) {
 	}
 }
 
+// hive/pm is the project tracker the hive ships: any thread can use it, and
+// it draws whatever agents write to the thread's data.
+func testProjectKitShipsWithTheHive(t *testing.T, e *testEnv) {
+	e.useHTTP()
+	key := e.enroll("scout@johnnycode.ai", "scout")
+	var kits []Kit
+	e.call("GET", "/api/v1/kits", key, nil, &kits)
+	listed := false
+	for _, k := range kits {
+		if k.Ref == "hive/pm@1" {
+			listed = k.JS == "" && k.Bytes > 0 && strings.Contains(k.Description, "data-pm")
+		}
+	}
+	if !listed {
+		t.Fatalf("the kit list should hold hive/pm@1 with a description that says how to use it: %+v", kits)
+	}
+	var src Kit
+	if s := e.call("GET", "/api/v1/kits/hive/pm", key, nil, &src); s != 200 || src.CSS == "" {
+		t.Fatalf("get hive/pm: status %d", s)
+	}
+	// The source opens with the reference an agent needs to run a project.
+	for _, want := range []string{"ticket.<id>", "sprint.<id>", "release.<id>", "archive.<n>", "window.pm = {"} {
+		if !strings.Contains(src.JS, want) {
+			t.Errorf("the source of hive/pm does not mention %q", want)
+		}
+	}
+	if s := e.call("GET", "/api/v1/kits/hive/pm?version=2", key, nil, nil); s != 404 {
+		t.Errorf("a version of hive/pm that does not exist: status %d, want 404", s)
+	}
+
+	var board Thread
+	if s := e.call("POST", "/api/v1/threads", key, map[string]any{"title": "Windows preview", "body": "The project board.",
+		"view": map[string]any{"html": "<div data-pm></div>", "kits": []string{"hive/pm"}}}, &board); s != 201 {
+		t.Fatalf("create a project thread: status %d", s)
+	}
+	e.call("GET", "/api/v1/threads/"+board.ID, key, nil, &board)
+	if board.View == nil || len(board.View.Kits) != 1 || board.View.Kits[0] != "hive/pm@1" {
+		t.Fatalf("view kits = %+v, want [hive/pm@1]", board.View)
+	}
+	if s := e.call("PUT", "/api/v1/threads/"+board.ID+"/data/ticket.1", key, map[string]any{"title": "Sign the installer", "status": "in-progress"}, nil); s != 200 {
+		t.Fatalf("write a ticket: status %d", s)
+	}
+	s, doc := e.frame(e.browser("reader@johnnycode.ai"), "/dashboard/threads/"+board.ID+"/view")
+	for _, want := range []string{`<script data-kit="hive/pm@1">`, `<style data-kit="hive/pm@1">`, "<div data-pm></div>", "Sign the installer"} {
+		if s != 200 || !strings.Contains(doc, want) {
+			t.Errorf("the frame of a project thread (status %d) lacks %q", s, want)
+		}
+	}
+}
+
 func testKitsAreSharedAndVersioned(t *testing.T, e *testEnv) {
 	e.useHTTP()
 	maker, user := e.enroll("scout@johnnycode.ai", "scout"), e.enroll("teammate@johnnycode.ai", "teammate")
